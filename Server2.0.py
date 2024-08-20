@@ -3,17 +3,14 @@ import threading
 import json
 import os
 
-# Список подключенных клиентов
 clients = []
-usernames = {}  # Словарь для хранения имен пользователей
+usernames = {}
 
-# Файл для хранения данных пользователей
 USERS_FILE = 'users.json'
-users_lock = threading.Lock()  # Создаем блокировку для работы с файлом
+users_lock = threading.Lock()
 
-# Функция для загрузки данных пользователей с сервера
 def load_users():
-    with users_lock:  # Защищаем доступ к файлу блокировкой
+    with users_lock:
         try:
             if os.path.exists(USERS_FILE):
                 with open(USERS_FILE, 'r', encoding='utf-8') as f:
@@ -23,21 +20,18 @@ def load_users():
             print(f"[-] Ошибка при загрузке данных пользователей: {e}")
             return {}
 
-# Функция для сохранения данных пользователей на сервере
 def save_users(users):
-    with users_lock:  # Защищаем доступ к файлу блокировкой
+    with users_lock:
         try:
             with open(USERS_FILE, 'w', encoding='utf-8') as f:
                 json.dump(users, f, ensure_ascii=False, indent=4)
         except Exception as e:
             print(f"[-] Ошибка при сохранении данных пользователей: {e}")
 
-# Функция для обработки соединений от клиентов
 def handle_client(client_socket, addr):
     print(f"[+] Новое соединение от {addr}")
     
     try:
-        # Обработка регистрации/входа
         client_socket.send("Введите 'register' для регистрации или 'login' для входа:".encode('utf-8'))
         mode = client_socket.recv(1024).decode('utf-8').strip().lower()
 
@@ -56,11 +50,13 @@ def handle_client(client_socket, addr):
             if register_user(client_socket, username, password):
                 usernames[client_socket] = username
                 clients.append(client_socket)
+                client_socket.send("Вход успешен!".encode('utf-8'))  # Убедимся, что сообщение отправляется
                 handle_messages(client_socket, addr)
         elif mode == 'login':
             if authenticate_user(client_socket, username, password):
                 usernames[client_socket] = username
                 clients.append(client_socket)
+                client_socket.send("Вход успешен!".encode('utf-8'))  # Убедимся, что сообщение отправляется
                 handle_messages(client_socket, addr)
         else:
             client_socket.send("Неизвестный режим. Соединение закрыто.".encode('utf-8'))
@@ -72,7 +68,6 @@ def handle_client(client_socket, addr):
             clients.remove(client_socket)
         client_socket.close()
 
-# Функция для обработки сообщений от клиентов
 def handle_messages(client_socket, addr):
     while True:
         try:
@@ -90,7 +85,6 @@ def handle_messages(client_socket, addr):
     clients.remove(client_socket)
     client_socket.close()
 
-# Функция для отправки сообщения всем клиентам
 def broadcast(message, sender_socket):
     for client in clients:
         if client != sender_socket:
@@ -101,22 +95,20 @@ def broadcast(message, sender_socket):
                 clients.remove(client)
                 client.close()
 
-# Функция для регистрации пользователя
 def register_user(client_socket, username, password):
-    users = load_users()  # Загружаем существующих пользователей
+    users = load_users()
     
     if username in users:
         client_socket.send("Пользователь с таким логином уже существует".encode('utf-8'))
         return False
     else:
-        users[username] = password  # Добавляем нового пользователя
-        save_users(users)  # Сохраняем в файл
+        users[username] = password
+        save_users(users)
         client_socket.send("Регистрация успешна!".encode('utf-8'))
         return True
 
-# Функция для аутентификации пользователя
 def authenticate_user(client_socket, username, password):
-    users = load_users()  # Загружаем существующих пользователей
+    users = load_users()
     
     if username in users and users[username] == password:
         client_socket.send("Вход успешен!".encode('utf-8'))
@@ -125,7 +117,6 @@ def authenticate_user(client_socket, username, password):
         client_socket.send("Неправильный логин или пароль".encode('utf-8'))
         return False
 
-# Основной код для запуска сервера
 def start_server():
     server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     server.bind(('10.1.3.190', 12345))
