@@ -11,6 +11,7 @@ token = None
 login_window = None
 reg_window = None
 root = None
+current_username = None  # Глобальная переменная для хранения имени пользователя
 
 def register():
     global reg_window, reg_username_entry, reg_password_entry
@@ -34,7 +35,7 @@ def register():
         messagebox.showerror("Ошибка", f"Произошла ошибка при попытке регистрации: {e}")
 
 def login():
-    global login_window, login_username_entry, login_password_entry, token
+    global login_window, login_username_entry, login_password_entry, token, current_username
 
     username = login_username_entry.get()
     password = login_password_entry.get()
@@ -47,6 +48,7 @@ def login():
         response = requests.post(f"{HOST}/login", json={'username': username, 'password': password})
         if response.status_code == 200:
             token = response.json().get('token')
+            current_username = username  # Сохраняем имя пользователя
             login_window.destroy()
             login_window = None
             sio.connect(HOST, headers={'Authorization': f'Bearer {token}'})  # Передаем токен при подключении
@@ -72,8 +74,14 @@ def receive_messages():
     @sio.on('message')
     def on_message(data):
         def update_chat_log():
+            username_in_message, message_text = data.split('] ', 1)
+            username_in_message = username_in_message[1:]  # Убираем '[' в начале
+
             chat_log.config(state=tk.NORMAL)
-            chat_log.insert(tk.END, f"{data}\n")
+            if username_in_message == current_username:
+                chat_log.insert(tk.END, f"Вы: {message_text}\n")
+            else:
+                chat_log.insert(tk.END, f"{data}\n")
             chat_log.yview(tk.END)
             chat_log.config(state=tk.DISABLED)
 
@@ -86,10 +94,6 @@ def send_message():
     else:
         try:
             sio.emit('message', {'text': message})
-            chat_log.config(state=tk.NORMAL)
-            chat_log.insert(tk.END, f"Вы: {message}\n")
-            chat_log.yview(tk.END)
-            chat_log.config(state=tk.DISABLED)
             message_entry.delete(0, tk.END)
         except Exception as e:
             messagebox.showerror("Ошибка", f"Не удалось отправить сообщение: {e}")
