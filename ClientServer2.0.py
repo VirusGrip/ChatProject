@@ -1,19 +1,19 @@
-import socket
+import socketio
 import threading
 import tkinter as tk
 from tkinter import scrolledtext, messagebox
+import requests
 
-HOST = '10.1.3.190'
-PORT = 12345
-
-client = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-client.connect((HOST, PORT))
+HOST = 'http://10.1.3.190:12345'
+sio = socketio.Client()
+token = None
 
 login_window = None
 reg_window = None
+root = None
 
 def register():
-    global reg_window
+    global reg_window, reg_username_entry, reg_password_entry
 
     username = reg_username_entry.get()
     password = reg_password_entry.get()
@@ -23,35 +23,18 @@ def register():
         return
 
     try:
-        client.send("register".encode('utf-8'))
-        response = client.recv(1024).decode('utf-8')
-        print(f"Received response: {response}")  # Отладочное сообщение
-
-        if "Введите логин" in response:
-            client.send(username.encode('utf-8'))
-            response = client.recv(1024).decode('utf-8')
-            print(f"Received response: {response}")  # Отладочное сообщение
-
-            if "Введите пароль" in response:
-                client.send(password.encode('utf-8'))
-                response = client.recv(1024).decode('utf-8')
-                print(f"Received response: {response}")  # Отладочное сообщение
-
-                if "успеш" in response.lower():
-                    messagebox.showinfo("Успех", "Регистрация прошла успешно!")
-                    reg_window.destroy()
-                    reg_window = None
-                else:
-                    messagebox.showerror("Ошибка", response)
-            else:
-                messagebox.showerror("Ошибка", "Не удалось получить запрос на ввод пароля от сервера.")
+        response = requests.post(f"{HOST}/register", json={'username': username, 'password': password})
+        if response.status_code == 201:
+            messagebox.showinfo("Успех", "Регистрация прошла успешно!")
+            reg_window.destroy()
+            reg_window = None
         else:
-            messagebox.showerror("Ошибка", "Не удалось получить запрос на ввод логина от сервера.")
+            messagebox.showerror("Ошибка", response.json().get('message', 'Ошибка регистрации'))
     except Exception as e:
         messagebox.showerror("Ошибка", f"Произошла ошибка при попытке регистрации: {e}")
 
 def login():
-    global login_window
+    global login_window, login_username_entry, login_password_entry, token
 
     username = login_username_entry.get()
     password = login_password_entry.get()
@@ -61,46 +44,40 @@ def login():
         return
 
     try:
-        client.send("login".encode('utf-8'))
-        response = client.recv(1024).decode('utf-8')
-        print(f"Received response: {response}")  # Отладочное сообщение
-
-        if "Введите логин" in response or "Вход успешен" in response:
-            if "Введите логин" in response:
-                client.send(username.encode('utf-8'))
-                response = client.recv(1024).decode('utf-8')
-                print(f"Received response: {response}")  # Отладочное сообщение
-
-            if "Введите пароль" in response or "Вход успешен" in response:
-                if "Введите пароль" in response:
-                    client.send(password.encode('utf-8'))
-                    response = client.recv(1024).decode('utf-8')
-                    print(f"Received response: {response}")  # Отладочное сообщение
-
-                if "успеш" in response.lower():
-                    login_window.destroy()
-                    login_window = None
-                    start_chat_interface()
-                else:
-                    messagebox.showerror("Ошибка", response)
-            else:
-                messagebox.showerror("Ошибка", "Не удалось получить запрос на ввод пароля от сервера.")
+        response = requests.post(f"{HOST}/login", json={'username': username, 'password': password})
+        if response.status_code == 200:
+            token = response.json().get('token')
+            login_window.destroy()
+            login_window = None
+            sio.connect(HOST, headers={'Authorization': f'Bearer {token}'})  # Передаем токен при подключении
+            start_chat_interface()
         else:
-            messagebox.showerror("Ошибка", "Не удалось получить запрос на ввод логина от сервера.")
+            messagebox.showerror("Ошибка", response.json().get('message', 'Ошибка входа'))
     except Exception as e:
         messagebox.showerror("Ошибка", f"Произошла ошибка при попытке входа: {e}")
 
+@sio.event
+def connect():
+    print("Соединение с сервером установлено.")
+
+@sio.event
+def connect_error(data):
+    print("Ошибка соединения с сервером:", data)
+
+@sio.event
+def disconnect():
+    print("Соединение с сервером разорвано.")
+
 def receive_messages():
-    while True:
-        try:
-            message = client.recv(1024).decode('utf-8')
-            if not message:
-                break
+    @sio.on('message')
+    def on_message(data):
+        def update_chat_log():
             chat_log.config(state=tk.NORMAL)
-            chat_log.insert(tk.END, f"{message}\n")
+            chat_log.insert(tk.END, f"{data}\n")
+            chat_log.yview(tk.END)
             chat_log.config(state=tk.DISABLED)
-        except:
-            break
+
+        chat_log.after(0, update_chat_log)
 
 def send_message():
     message = message_entry.get()
@@ -108,9 +85,10 @@ def send_message():
         close_connection()
     else:
         try:
-            client.send(message.encode('utf-8'))
+            sio.emit('message', {'text': message})
             chat_log.config(state=tk.NORMAL)
             chat_log.insert(tk.END, f"Вы: {message}\n")
+            chat_log.yview(tk.END)
             chat_log.config(state=tk.DISABLED)
             message_entry.delete(0, tk.END)
         except Exception as e:
@@ -120,16 +98,13 @@ def close_connection():
     global root
 
     try:
-        client.close()
+        sio.disconnect()
     except:
         pass
     if root is not None:
         root.destroy()
         root = None
     print("[-] Соединение закрыто")
-
-receive_thread = threading.Thread(target=receive_messages, daemon=True)
-receive_thread.start()
 
 def start_chat_interface():
     global chat_log, message_entry, root
@@ -148,6 +123,11 @@ def start_chat_interface():
     send_button.pack(padx=10, pady=10)
 
     root.protocol("WM_DELETE_WINDOW", close_connection)
+
+    # Запуск потока для приёма сообщений после инициализации GUI
+    receive_thread = threading.Thread(target=receive_messages, daemon=True)
+    receive_thread.start()
+
     root.mainloop()
 
 def show_login_window():

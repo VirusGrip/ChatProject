@@ -1,131 +1,146 @@
-import socket
+from flask import Flask, request, jsonify, session
+from flask_socketio import SocketIO, send, emit, join_room, leave_room
+from werkzeug.security import generate_password_hash, check_password_hash
+import sqlite3
 import threading
-import json
 import os
+import jwt  
 
-clients = []
-usernames = {}
+app = Flask(__name__)
+app.secret_key = '12345678'
+socketio = SocketIO(app, manage_session=True)
 
-USERS_FILE = 'users.json'
-users_lock = threading.Lock()
+DATABASE = 'chat.db'
 
-def load_users():
-    with users_lock:
-        try:
-            if os.path.exists(USERS_FILE):
-                with open(USERS_FILE, 'r', encoding='utf-8') as f:
-                    return json.load(f)
-            return {}
-        except Exception as e:
-            print(f"[-] Ошибка при загрузке данных пользователей: {e}")
-            return {}
+# Инициализация базы данных
+def init_db():
+    if not os.path.exists(DATABASE):
+        conn = sqlite3.connect(DATABASE)
+        cursor = conn.cursor()
+        cursor.execute('''
+            CREATE TABLE users (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                username TEXT UNIQUE NOT NULL,
+                password TEXT NOT NULL
+            )
+        ''')
+        cursor.execute('''
+            CREATE TABLE messages (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER,
+                message TEXT NOT NULL,
+                timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (user_id) REFERENCES users(id)
+            )
+        ''')
+        conn.commit()
+        conn.close()
 
-def save_users(users):
-    with users_lock:
-        try:
-            with open(USERS_FILE, 'w', encoding='utf-8') as f:
-                json.dump(users, f, ensure_ascii=False, indent=4)
-        except Exception as e:
-            print(f"[-] Ошибка при сохранении данных пользователей: {e}")
+# Подключение к базе данных
+def get_db():
+    conn = sqlite3.connect(DATABASE)
+    return conn, conn.cursor()
 
-def handle_client(client_socket, addr):
-    print(f"[+] Новое соединение от {addr}")
-    
+# Регистрация пользователя
+@app.route('/register', methods=['POST'])
+def register():
+    data = request.json
+    username = data['username']
+    password = data['password']
+    hashed_password = generate_password_hash(password)
+
+    conn, cur = get_db()
     try:
-        client_socket.send("Введите 'register' для регистрации или 'login' для входа:".encode('utf-8'))
-        mode = client_socket.recv(1024).decode('utf-8').strip().lower()
-
-        if mode not in ['register', 'login']:
-            client_socket.send("Неправильная команда. Соединение закрыто.".encode('utf-8'))
-            client_socket.close()
-            return
-
-        client_socket.send("Введите логин:".encode('utf-8'))
-        username = client_socket.recv(1024).decode('utf-8').strip()
-
-        client_socket.send("Введите пароль:".encode('utf-8'))
-        password = client_socket.recv(1024).decode('utf-8').strip()
-
-        if mode == 'register':
-            if register_user(client_socket, username, password):
-                usernames[client_socket] = username
-                clients.append(client_socket)
-                client_socket.send("Вход успешен!".encode('utf-8'))  # Убедимся, что сообщение отправляется
-                handle_messages(client_socket, addr)
-        elif mode == 'login':
-            if authenticate_user(client_socket, username, password):
-                usernames[client_socket] = username
-                clients.append(client_socket)
-                client_socket.send("Вход успешен!".encode('utf-8'))  # Убедимся, что сообщение отправляется
-                handle_messages(client_socket, addr)
-        else:
-            client_socket.send("Неизвестный режим. Соединение закрыто.".encode('utf-8'))
-            client_socket.close()
-    except Exception as e:
-        print(f"[-] Ошибка обработки клиента {addr}: {e}")
+        cur.execute("INSERT INTO users (username, password) VALUES (?, ?)", (username, hashed_password))
+        conn.commit()
+        return jsonify({'message': 'Регистрация успешна!'}), 201
+    except sqlite3.IntegrityError:
+        return jsonify({'message': 'Пользователь с таким логином уже существует'}), 400
     finally:
-        if client_socket in clients:
-            clients.remove(client_socket)
-        client_socket.close()
+        conn.close()
 
-def handle_messages(client_socket, addr):
-    while True:
+# Вход пользователя
+# Импорт JWT
+
+@app.route('/login', methods=['POST'])
+def login():
+    data = request.json
+    username = data['username']
+    password = data['password']
+
+    conn, cur = get_db()
+    cur.execute("SELECT * FROM users WHERE username = ?", (username,))
+    user = cur.fetchone()
+    conn.close()
+
+    if user and check_password_hash(user[2], password):
+        # Генерация JWT токена
+        token = jwt.encode({'user_id': user[0], 'username': username}, app.secret_key, algorithm='HS256')
+        return jsonify({'token': token}), 200  # Возвращаем токен в ответе
+    else:
+        return jsonify({'message': 'Неправильный логин или пароль'}), 400
+
+# Обработка подключения к WebSocket
+@socketio.on('connect')
+def handle_connect():
+    token = request.headers.get('Authorization')
+    if token:
         try:
-            message = client_socket.recv(1024).decode('utf-8')
-            if not message:
-                break
-
-            print(f"[{usernames[client_socket]}] {message}")
-            broadcast(f"[{usernames[client_socket]}] {message}", client_socket)
-        except Exception as e:
-            print(f"[-] Ошибка обработки сообщения от {addr}: {e}")
-            break
-
-    print(f"[-] Соединение с {addr} закрыто")
-    clients.remove(client_socket)
-    client_socket.close()
-
-def broadcast(message, sender_socket):
-    for client in clients:
-        if client != sender_socket:
-            try:
-                client.send(message.encode('utf-8'))
-            except Exception as e:
-                print(f"[-] Ошибка при отправке сообщения: {e}")
-                clients.remove(client)
-                client.close()
-
-def register_user(client_socket, username, password):
-    users = load_users()
-    
-    if username in users:
-        client_socket.send("Пользователь с таким логином уже существует".encode('utf-8'))
-        return False
+            # Декодируем токен
+            decoded = jwt.decode(token.split(' ')[1], app.secret_key, algorithms=['HS256'])
+            session['user_id'] = decoded['user_id']
+            session['username'] = decoded['username']
+            send(f"Пользователь {decoded['username']} с ID {decoded['user_id']} успешно подключен", to=request.sid)
+        except jwt.InvalidTokenError:
+            send("Ошибка: Неверный токен", to=request.sid)
+            return
     else:
-        users[username] = password
-        save_users(users)
-        client_socket.send("Регистрация успешна!".encode('utf-8'))
-        return True
+        send("Ошибка: Вы не авторизованы", to=request.sid)
+        return
 
-def authenticate_user(client_socket, username, password):
-    users = load_users()
+# Обработка сообщений
+@socketio.on('message')
+def handle_message(data):
+    user_id = session.get('user_id')
+    username = session.get('username')
     
-    if username in users and users[username] == password:
-        client_socket.send("Вход успешен!".encode('utf-8'))
-        return True
-    else:
-        client_socket.send("Неправильный логин или пароль".encode('utf-8'))
-        return False
+    if not user_id:
+        send("Ошибка: Вы не авторизованы", to=request.sid)
+        return
 
-def start_server():
-    server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    server.bind(('10.1.3.190', 12345))
-    server.listen(5)
-    print("[*] Сервер запущен на порту 12345")
+    conn, cur = get_db()
+    cur.execute("INSERT INTO messages (user_id, message) VALUES (?, ?)", (user_id, data['text']))
+    conn.commit()
+    conn.close()
 
-    while True:
-        client_socket, addr = server.accept()
-        client_thread = threading.Thread(target=handle_client, args=(client_socket, addr))
-        client_thread.start()
+    send(f"[{username}] {data['text']}", broadcast=True)
 
-start_server()
+# Отправка истории сообщений при подключении
+@socketio.on('join')
+def handle_join():
+    user_id = session.get('user_id')
+    if not user_id:
+        send("Ошибка: Вы не авторизованы", to=request.sid)
+        return
+
+    conn, cur = get_db()
+    cur.execute("""
+        SELECT messages.message, users.username, messages.timestamp 
+        FROM messages JOIN users ON messages.user_id = users.id 
+        ORDER BY messages.timestamp ASC
+    """)
+    chat_history = cur.fetchall()
+    conn.close()
+
+    for message in chat_history:
+        send(f"[{message[1]}] {message[0]} ({message[2]})", to=request.sid)
+
+# Обработка отключения
+@socketio.on('disconnect')
+def handle_disconnect():
+    print(f"Пользователь {session.get('username')} с ID {session.get('user_id')} отключен, session ID: {request.sid}")
+
+# Запуск сервера
+if __name__ == '__main__':
+    init_db()
+    socketio.run(app, host='10.1.3.190', port=12345)
