@@ -78,21 +78,6 @@ def login():
     else:
         return jsonify({'message': 'Неправильный логин или пароль'}), 400
 
-# Получение списка активных пользователей
-@app.route('/users', methods=['GET'])
-def get_users():
-    token = request.headers.get('Authorization')
-    if not token:
-        return jsonify({'message': 'Токен отсутствует'}), 403
-
-    try:
-        decoded = jwt.decode(token.split(' ')[1], app.secret_key, algorithms=['HS256'])
-    except jwt.InvalidTokenError:
-        return jsonify({'message': 'Неверный токен'}), 403
-
-    # Возвращаем список активных пользователей
-    return jsonify({'users': list(active_users.values())}), 200
-
 # Получение списка всех пользователей
 @app.route('/all_users', methods=['GET'])
 def get_all_users():

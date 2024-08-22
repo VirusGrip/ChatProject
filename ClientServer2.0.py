@@ -1,5 +1,4 @@
 import socketio
-import threading
 import tkinter as tk
 from tkinter import scrolledtext, messagebox
 import requests
@@ -83,6 +82,17 @@ def all_users(userList):
     """Обработчик получения списка всех зарегистрированных пользователей."""
     update_user_list(userList)
 
+@sio.event
+def message(data):
+    """Обработка входящих сообщений."""
+    def update_chat_log():
+        chat_log.config(state=tk.NORMAL)
+        chat_log.insert(tk.END, f"{data}\n")
+        chat_log.config(state=tk.DISABLED)
+        chat_log.see(tk.END)
+
+    root.after(0, update_chat_log)
+
 def request_all_users():
     """Запрос всех зарегистрированных пользователей с сервера."""
     try:
@@ -121,23 +131,6 @@ def _update_user_list_gui(users):
             print(f"Добавление пользователя в Listbox: {user}")  # Отладочная информация
             user_listbox.insert(tk.END, user)  # Добавление пользователей в список
         user_listbox.update_idletasks()  # Обновление интерфейса
-
-@sio.on('message')
-def on_message(data):
-    """Обработка входящих сообщений."""
-    def update_chat_log():
-        username_in_message, message_text = data.split('] ', 1)
-        username_in_message = username_in_message[1:]
-
-        chat_log.config(state=tk.NORMAL)
-        if username_in_message == current_username:
-            chat_log.insert(tk.END, f"Вы: {message_text}\n")
-        else:
-            chat_log.insert(tk.END, f"{data}\n")
-        chat_log.config(state=tk.DISABLED)
-        chat_log.see(tk.END)
-
-    root.after(0, update_chat_log)
 
 def send_message():
     """Отправка сообщения пользователю."""
@@ -180,8 +173,7 @@ def start_private_chat(event):
     selection = user_listbox.curselection()
     if selection:  # Проверяем, выбран ли элемент
         selected_user = user_listbox.get(selection[0])
-        message_entry.delete(0, tk.END)
-        message_entry.insert(0, f"Привет, {selected_user}!")
+        sio.emit('select_user', {'username': selected_user})
     else:
         messagebox.showinfo("Информация", "Пожалуйста, выберите пользователя из списка.")
 
