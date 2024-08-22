@@ -99,6 +99,9 @@ def handle_connect():
             session['username'] = decoded['username']
             active_users[request.sid] = decoded['username']
 
+            # Присоединяем пользователя к общей комнате
+            join_room('global_room')
+
             # Отправляем список всех пользователей клиенту при подключении
             conn, cur = get_db()
             cur.execute("SELECT username FROM users")
@@ -115,6 +118,21 @@ def handle_connect():
         send("Ошибка: Вы не авторизованы", to=request.sid)
         return
 
+@socketio.on('global_message')
+def handle_global_message(data):
+    username = session.get('username')
+    message_text = data.get('text')
+
+    # Отправка сообщения всем пользователям в общей комнате
+    emit('message', f"[{username}] {message_text}", room='global_room')
+
+    # Сохранение сообщения в базе данных
+    user_id = session.get('user_id')
+    if user_id:
+        conn, cur = get_db()
+        cur.execute("INSERT INTO messages (user_id, message) VALUES (?, ?)", (user_id, message_text))
+        conn.commit()
+        conn.close()
 # Обработка выбора пользователя для чата
 @socketio.on('select_user')
 def handle_select_user(data):
@@ -132,31 +150,32 @@ def handle_select_user(data):
     else:
         send("Ошибка: Пользователь не найден", to=request.sid)
 
-# Обработка сообщений
 @socketio.on('private_message')
 def handle_private_message(data):
-    user_id = session.get('user_id')
     username = session.get('username')
+    recipient = data.get('to')
+    message_text = data.get('text')
 
-    if not user_id:
-        send("Ошибка: Вы не авторизованы", to=request.sid)
+    if not username or not recipient:
+        send("Ошибка: Вы не авторизованы или не указан получатель", to=request.sid)
         return
 
-    recipient = data.get('to')
-    message_text = data['text']
+    # Формирование уникального имени комнаты для чата
+    room = f"room_{min(username, recipient)}_{max(username, recipient)}"
 
-    # Генерация имени комнаты
-    room = f"room_{username}_{recipient}" if f"room_{username}_{recipient}" in socketio.server.manager.rooms else f"room_{recipient}_{username}"
-    recipient_sid = next((sid for sid, name in active_users.items() if name == recipient), None)
+    # Присоединяемся к комнате, если еще не присоединились
+    join_room(room)
 
-    if recipient_sid:
-        emit('message', f"[{username} -> {recipient}] {message_text}", room=room)
+    # Отправляем сообщение только в приватную комнату
+    emit('private_message', {'from': username, 'to': recipient, 'text': message_text}, room=room)
 
     # Сохранение сообщения в базе данных
+    user_id = session.get('user_id')
     conn, cur = get_db()
     cur.execute("INSERT INTO messages (user_id, message) VALUES (?, ?)", (user_id, message_text))
     conn.commit()
     conn.close()
+
 
 # Обработка отключения
 @socketio.on('disconnect')
