@@ -4,16 +4,19 @@ import tkinter as tk
 from tkinter import scrolledtext, messagebox
 import requests
 
-HOST = 'http://10.1.3.190:12345'
+HOST = 'http://10.1.3.187:12345'
 sio = socketio.Client()
 token = None
 
 login_window = None
 reg_window = None
 root = None
-current_username = None  # Глобальная переменная для хранения имени пользователя
+current_username = None
+user_listbox = None
+all_users = []  # Список всех зарегистрированных пользователей
 
 def register():
+    """Обработчик регистрации нового пользователя."""
     global reg_window, reg_username_entry, reg_password_entry
 
     username = reg_username_entry.get()
@@ -35,6 +38,7 @@ def register():
         messagebox.showerror("Ошибка", f"Произошла ошибка при попытке регистрации: {e}")
 
 def login():
+    """Обработчик входа пользователя."""
     global login_window, login_username_entry, login_password_entry, token, current_username
 
     username = login_username_entry.get()
@@ -48,10 +52,10 @@ def login():
         response = requests.post(f"{HOST}/login", json={'username': username, 'password': password})
         if response.status_code == 200:
             token = response.json().get('token')
-            current_username = username  # Сохраняем имя пользователя
+            current_username = username
             login_window.destroy()
             login_window = None
-            sio.connect(HOST, headers={'Authorization': f'Bearer {token}'})  # Передаем токен при подключении
+            sio.connect(HOST, headers={'Authorization': f'Bearer {token}'})
             start_chat_interface()
         else:
             messagebox.showerror("Ошибка", response.json().get('message', 'Ошибка входа'))
@@ -60,115 +64,172 @@ def login():
 
 @sio.event
 def connect():
+    """Обработчик события подключения к серверу."""
     print("Соединение с сервером установлено.")
+    request_all_users()
 
 @sio.event
 def connect_error(data):
+    """Обработчик события ошибки соединения с сервером."""
     print("Ошибка соединения с сервером:", data)
 
 @sio.event
 def disconnect():
+    """Обработчик события отключения от сервера."""
     print("Соединение с сервером разорвано.")
 
-def receive_messages():
-    @sio.on('message')
-    def on_message(data):
-        def update_chat_log():
-            username_in_message, message_text = data.split('] ', 1)
-            username_in_message = username_in_message[1:]  # Убираем '[' в начале
+@sio.event
+def all_users(userList):
+    """Обработчик получения списка всех зарегистрированных пользователей."""
+    update_user_list(userList)
 
-            chat_log.config(state=tk.NORMAL)
-            if username_in_message == current_username:
-                chat_log.insert(tk.END, f"Вы: {message_text}\n")
-            else:
-                chat_log.insert(tk.END, f"{data}\n")
-            chat_log.yview(tk.END)
-            chat_log.config(state=tk.DISABLED)
+def request_all_users():
+    """Запрос всех зарегистрированных пользователей с сервера."""
+    try:
+        print(f"Запрос списка всех пользователей с сервера...")  # Отладочная информация
+        response = requests.get(f"{HOST}/all_users", headers={'Authorization': f'Bearer {token}'})
+        if response.status_code == 200:
+            global all_users
+            all_users = response.json().get('users', [])
+            print(f"Список пользователей с сервера: {all_users}")  # Отладочная информация
+            update_user_list(all_users)  # Обновляем список всех пользователей
+        else:
+            messagebox.showerror("Ошибка", "Не удалось получить список пользователей.")
+    except Exception as e:
+        messagebox.showerror("Ошибка", f"Произошла ошибка при запросе пользователей: {e}")
 
-        chat_log.after(0, update_chat_log)
+def update_user_list(users):
+    """Обновление списка пользователей в интерфейсе."""
+    print(f"Получен список пользователей: {users}")  # Отладочная информация
+    if user_listbox:
+        # Убедимся, что текущий пользователь есть в списке
+        if current_username not in users:
+            users.append(current_username)
+            print(f"Добавлен текущий пользователь: {current_username}")  # Отладочная информация
+
+        print(f"Планируем обновление Listbox через root.after с пользователями: {users}")
+        root.after(0, lambda: _update_user_list_gui(users))  # Отложенное обновление GUI
+
+def _update_user_list_gui(users):
+    """Обновление Listbox в интерфейсе."""
+    print(f"Обновление Listbox GUI: {users}")  # Отладочная информация
+    if user_listbox is None:
+        print("Listbox не был инициализирован!")  # Предупреждение
+    else:
+        user_listbox.delete(0, tk.END)  # Очистка списка
+        for user in users:
+            print(f"Добавление пользователя в Listbox: {user}")  # Отладочная информация
+            user_listbox.insert(tk.END, user)  # Добавление пользователей в список
+        user_listbox.update_idletasks()  # Обновление интерфейса
+
+@sio.on('message')
+def on_message(data):
+    """Обработка входящих сообщений."""
+    def update_chat_log():
+        username_in_message, message_text = data.split('] ', 1)
+        username_in_message = username_in_message[1:]
+
+        chat_log.config(state=tk.NORMAL)
+        if username_in_message == current_username:
+            chat_log.insert(tk.END, f"Вы: {message_text}\n")
+        else:
+            chat_log.insert(tk.END, f"{data}\n")
+        chat_log.config(state=tk.DISABLED)
+        chat_log.see(tk.END)
+
+    root.after(0, update_chat_log)
 
 def send_message():
-    message = message_entry.get()
-    if message.lower() == 'exit':
-        close_connection()
-    else:
-        try:
-            sio.emit('message', {'text': message})
-            message_entry.delete(0, tk.END)
-        except Exception as e:
-            messagebox.showerror("Ошибка", f"Не удалось отправить сообщение: {e}")
-
-def close_connection():
-    global root
-
-    try:
-        sio.disconnect()
-    except:
-        pass
-    if root is not None:
-        root.destroy()
-        root = None
-    print("[-] Соединение закрыто")
+    """Отправка сообщения пользователю."""
+    recipient = user_listbox.get(tk.ACTIVE)  # Получаем выбранного пользователя
+    message_text = message_entry.get()
+    if recipient and message_text:
+        sio.emit('private_message', {'text': message_text, 'to': recipient})  # Отправка приватного сообщения
+        message_entry.delete(0, tk.END)
 
 def start_chat_interface():
-    global chat_log, message_entry, root
+    """Инициализация интерфейса чата."""
+    global root, chat_log, message_entry, user_listbox
 
+    print("Инициализация чата...")
     root = tk.Tk()
-    root.title("Чат")
+    root.title("Чат с личными сообщениями")
 
-    chat_log = scrolledtext.ScrolledText(root, state=tk.DISABLED)
+    chat_log = scrolledtext.ScrolledText(root, state=tk.DISABLED, width=50, height=20)
     chat_log.pack(padx=10, pady=10)
 
-    message_entry = tk.Entry(root, width=50)
-    message_entry.pack(padx=10, pady=10)
-    message_entry.bind("<Return>", lambda event: send_message())
+    message_entry = tk.Entry(root, width=40)
+    message_entry.pack(side=tk.LEFT, padx=(10, 0))
 
     send_button = tk.Button(root, text="Отправить", command=send_message)
-    send_button.pack(padx=10, pady=10)
+    send_button.pack(side=tk.LEFT, padx=(0, 10))
 
-    root.protocol("WM_DELETE_WINDOW", close_connection)
+    user_listbox = tk.Listbox(root, width=20, height=20)
+    user_listbox.pack(side=tk.RIGHT, padx=(0, 10))
+    print("Listbox создан и размещен")
 
-    # Запуск потока для приёма сообщений после инициализации GUI
-    receive_thread = threading.Thread(target=receive_messages, daemon=True)
-    receive_thread.start()
+    user_listbox.bind('<Double-1>', start_private_chat)
+
+    # Запрашиваем список всех пользователей после создания интерфейса
+    root.after(1000, request_all_users)  # Используйте небольшую задержку для инициализации
 
     root.mainloop()
 
+def start_private_chat(event):
+    """Начинает приватный чат с пользователем по двойному клику."""
+    selection = user_listbox.curselection()
+    if selection:  # Проверяем, выбран ли элемент
+        selected_user = user_listbox.get(selection[0])
+        message_entry.delete(0, tk.END)
+        message_entry.insert(0, f"Привет, {selected_user}!")
+    else:
+        messagebox.showinfo("Информация", "Пожалуйста, выберите пользователя из списка.")
+
 def show_login_window():
+    """Отображение окна входа."""
     global login_window, login_username_entry, login_password_entry
 
     login_window = tk.Tk()
     login_window.title("Вход")
 
-    tk.Label(login_window, text="Логин").pack(pady=5)
+    tk.Label(login_window, text="Логин").pack(padx=10, pady=(10, 0))
     login_username_entry = tk.Entry(login_window)
-    login_username_entry.pack(pady=5)
+    login_username_entry.pack(padx=10, pady=(0, 10))
 
-    tk.Label(login_window, text="Пароль").pack(pady=5)
+    tk.Label(login_window, text="Пароль").pack(padx=10, pady=(10, 0))
     login_password_entry = tk.Entry(login_window, show="*")
-    login_password_entry.pack(pady=5)
+    login_password_entry.pack(padx=10, pady=(0, 10))
 
-    tk.Button(login_window, text="Вход", command=login).pack(pady=10)
-    tk.Button(login_window, text="Регистрация", command=show_registration_window).pack(pady=10)
+    login_button = tk.Button(login_window, text="Войти", command=login)
+    login_button.pack(padx=10, pady=(10, 0))
+
+    reg_button = tk.Button(login_window, text="Зарегистрироваться", command=show_registration_window)
+    reg_button.pack(padx=10, pady=(10, 10))
 
     login_window.mainloop()
 
 def show_registration_window():
+    """Отображение окна регистрации."""
     global reg_window, reg_username_entry, reg_password_entry
 
-    reg_window = tk.Tk()
+    if reg_window is not None:
+        return
+
+    reg_window = tk.Toplevel()
     reg_window.title("Регистрация")
 
-    tk.Label(reg_window, text="Логин").pack(pady=5)
+    tk.Label(reg_window, text="Логин").pack(padx=10, pady=(10, 0))
     reg_username_entry = tk.Entry(reg_window)
-    reg_username_entry.pack(pady=5)
+    reg_username_entry.pack(padx=10, pady=(0, 10))
 
-    tk.Label(reg_window, text="Пароль").pack(pady=5)
+    tk.Label(reg_window, text="Пароль").pack(padx=10, pady=(10, 0))
     reg_password_entry = tk.Entry(reg_window, show="*")
-    reg_password_entry.pack(pady=5)
+    reg_password_entry.pack(padx=10, pady=(0, 10))
 
-    tk.Button(reg_window, text="Зарегистрироваться", command=register).pack(pady=10)
+    reg_button = tk.Button(reg_window, text="Зарегистрироваться", command=register)
+    reg_button.pack(padx=10, pady=(10, 10))
 
     reg_window.mainloop()
 
-show_login_window()
+if __name__ == '__main__':
+    show_login_window()
