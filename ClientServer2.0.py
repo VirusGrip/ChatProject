@@ -106,12 +106,22 @@ def private_message(data):
     recipient = data['to']
     message = data['text']
 
-    # Если сообщение предназначено для текущего пользователя в приватном чате
-    if current_username == recipient:
-        private_chat_listbox.config(state=tk.NORMAL)
-        private_chat_listbox.insert(tk.END, f"{sender} -> {recipient}: {message}\n")
-        private_chat_listbox.yview(tk.END)
-        private_chat_listbox.config(state=tk.DISABLED)
+    def update_chat_window():
+        if sender in root.private_chat_windows:
+            private_chat_listbox = root.private_chat_windows[sender]['listbox']
+            
+            if private_chat_listbox.winfo_exists():
+                private_chat_listbox.config(state=tk.NORMAL)
+                private_chat_listbox.insert(tk.END, f"{sender} -> {recipient}: {message}\n")
+                private_chat_listbox.yview(tk.END)
+                private_chat_listbox.config(state=tk.DISABLED)
+            else:
+                print(f"Виджет для чата с {sender} больше не существует.")
+        else:
+            print(f"Окно чата с {sender} не найдено.")
+
+    root.after(0, update_chat_window)
+
 
 @sio.event
 def message(data):
@@ -136,6 +146,12 @@ def start_private_chat(username):
     """Начало приватного чата с выбранным пользователем."""
     global private_chat_window, private_chat_listbox, private_message_entry
 
+    if not hasattr(root, 'private_chat_windows'):
+        root.private_chat_windows = {}
+
+    if username in root.private_chat_windows:
+        return  # Чат уже открыт
+
     private_chat_window = tk.Toplevel(root)
     private_chat_window.title(f"Чат с {username}")
 
@@ -149,6 +165,10 @@ def start_private_chat(username):
     send_button = tk.Button(private_chat_window, text="Отправить", command=lambda: send_private_message(username))
     send_button.pack(padx=10, pady=5)
 
+    root.private_chat_windows[username] = {
+        'window': private_chat_window,
+        'listbox': private_chat_listbox
+    }
 def send_private_message(username):
     """Отправка приватного сообщения."""
     message = private_message_entry.get()

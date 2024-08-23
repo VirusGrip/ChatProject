@@ -143,10 +143,10 @@ def handle_select_user(data):
 
     selected_sid = next((sid for sid, name in active_users.items() if name == selected_user), None)
     if selected_sid:
-        # Создание комнаты для приватного чата
-        room = f"room_{session['username']}_{selected_user}"
+        # Формирование уникального имени комнаты
+        room = f"room_{min(session['username'], selected_user)}_{max(session['username'], selected_user)}"
         join_room(room)
-        emit('chat_started', {'message': f"Чат с {selected_user} начат"}, room=room)
+        emit('chat_started', {'room': room, 'username': selected_user}, room=request.sid)
     else:
         send("Ошибка: Пользователь не найден", to=request.sid)
 
@@ -163,11 +163,13 @@ def handle_private_message(data):
     # Формирование уникального имени комнаты для чата
     room = f"room_{min(username, recipient)}_{max(username, recipient)}"
 
-    # Присоединяемся к комнате, если еще не присоединились
+    print(f"Отправка личного сообщения от {username} к {recipient} в комнату {room}")
+
+    # Присоединяем отправителя к комнате (если это нужно)
     join_room(room)
 
     # Отправляем сообщение только в приватную комнату
-    emit('private_message', {'from': username, 'to': recipient, 'text': message_text}, room=room)
+    emit('private_message', {'from': username, 'to': recipient, 'text': message_text, 'room': room}, room=room)
 
     # Сохранение сообщения в базе данных
     user_id = session.get('user_id')
