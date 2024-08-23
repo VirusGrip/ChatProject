@@ -108,25 +108,12 @@ def private_message(data):
     recipient = data['to']
     message = data['text']
 
-    # Если отправитель - это текущий пользователь, добавляем сообщение как "Вы"
+    # Если сообщение отправлено текущим пользователем, не отображаем его снова
     if sender == current_username:
-        if recipient in private_chat_windows:
-            # Обновляем окно чата получателя
-            private_chat_listbox = private_chat_windows[recipient]['listbox']
-            private_chat_listbox.config(state=tk.NORMAL)
-            private_chat_listbox.insert(tk.END, f"Вы: {message}\n")
-            private_chat_listbox.yview(tk.END)
-            private_chat_listbox.config(state=tk.DISABLED)
-        else:
-            # Открываем новое окно чата с получателем
-            start_private_chat(recipient)
-            private_chat_listbox = private_chat_windows[recipient]['listbox']
-            private_chat_listbox.config(state=tk.NORMAL)
-            private_chat_listbox.insert(tk.END, f"Вы: {message}\n")
-            private_chat_listbox.yview(tk.END)
-            private_chat_listbox.config(state=tk.DISABLED)
-    else:
-        # Если отправитель - это другой пользователь
+        return
+    
+    # Если сообщение получено текущим пользователем
+    if recipient == current_username:
         if sender in private_chat_windows:
             # Обновляем окно чата отправителя
             private_chat_listbox = private_chat_windows[sender]['listbox']
@@ -134,7 +121,7 @@ def private_message(data):
             private_chat_listbox.insert(tk.END, f"{sender}: {message}\n")
             private_chat_listbox.yview(tk.END)
             private_chat_listbox.config(state=tk.DISABLED)
-            private_chat_windows[sender]['window'].lift()  # Фокус на окно
+            private_chat_windows[sender]['window'].lift()  # Поднимаем окно
         else:
             # Открываем новое окно чата с отправителем
             start_private_chat(sender)
@@ -143,7 +130,6 @@ def private_message(data):
             private_chat_listbox.insert(tk.END, f"{sender}: {message}\n")
             private_chat_listbox.yview(tk.END)
             private_chat_listbox.config(state=tk.DISABLED)
-
 
 def send_message():
     """Отправка сообщения в общий чат."""
@@ -198,6 +184,7 @@ def send_private_message(username):
     private_chat_listbox.yview(tk.END)
     private_chat_listbox.config(state=tk.DISABLED)
 
+    # Очищаем поле ввода
     private_chat_windows[username]['entry'].delete(0, tk.END)
     
 def update_user_listbox():
