@@ -36,6 +36,19 @@ def init_db():
         ''')
         conn.commit()
         conn.close()
+def get_chat_history(user_id, recipient_id):
+    conn, cur = get_db()
+    cur.execute("""
+        SELECT messages.message, messages.timestamp, sender.username as sender
+        FROM messages
+        JOIN users AS sender ON messages.user_id = sender.id
+        WHERE (messages.user_id = ? AND messages.recipient_id = ?)
+           OR (messages.user_id = ? AND messages.recipient_id = ?)
+        ORDER BY messages.timestamp ASC
+    """, (user_id, recipient_id, recipient_id, user_id))
+    chat_history = cur.fetchall()
+    conn.close()
+    return chat_history
 
 
 # Подключение к базе данных
@@ -172,7 +185,7 @@ def handle_private_message(data):
     message_text = data.get('text')
 
     if not username or not recipient:
-        send("Ошибка: Вы не авторизованы или не указан получатель", to=request.sid)
+        emit('error', {'message': 'Ошибка: Вы не авторизованы или не указан получатель'})
         return
 
     room = f"room_{min(username, recipient)}_{max(username, recipient)}"
@@ -198,7 +211,33 @@ def handle_private_message(data):
                     (user_id, recipient_id, message_text, is_read))
         conn.commit()
     else:
-        print("Ошибка: Получатель не найден в базе данных")
+        emit('error', {'message': 'Ошибка: Получатель не найден в базе данных'})
+
+    conn.close()
+
+@socketio.on('start_private_chat')
+def handle_start_private_chat(data):
+    recipient_username = data.get('username')
+    if not recipient_username:
+        emit('error', {'message': 'Пользователь не указан'})
+        return
+
+    conn, cur = get_db()
+    cur.execute("SELECT id FROM users WHERE username = ?", (recipient_username,))
+    recipient = cur.fetchone()
+
+    if not recipient:
+        emit('error', {'message': 'Пользователь не найден'})
+        return
+
+    recipient_id = recipient[0]
+    user_id = session['user_id']
+
+    # Получаем историю чата
+    chat_history = get_chat_history(user_id, recipient_id)
+    formatted_history = [{'sender': sender, 'text': msg, 'timestamp': timestamp} for msg, timestamp, sender in chat_history]
+
+    emit('chat_history', {'username': recipient_username, 'messages': formatted_history}, room=request.sid)
 
     conn.close()
 
