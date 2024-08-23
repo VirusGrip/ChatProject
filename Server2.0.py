@@ -30,6 +30,7 @@ def init_db():
                 recipient_id INTEGER,
                 message TEXT NOT NULL,
                 timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+                is_read INTEGER DEFAULT 0,
                 FOREIGN KEY (user_id) REFERENCES users(id),
                 FOREIGN KEY (recipient_id) REFERENCES users(id)
             )
@@ -124,7 +125,18 @@ def handle_connect():
             user_list = [user[0] for user in users]
             emit('all_users', user_list, to=request.sid)
 
-            # Получаем непрочитанные сообщения для пользователя
+            # Получаем количество непрочитанных сообщений от каждого пользователя
+            cur.execute("""
+                SELECT users.username, COUNT(messages.id) as unread_count
+                FROM messages
+                JOIN users ON users.id = messages.user_id
+                WHERE messages.recipient_id = ? AND messages.is_read = 0
+                GROUP BY users.username
+            """, (session['user_id'],))
+            unread_counts = cur.fetchall()
+            emit('unread_counts', unread_counts, room=request.sid)
+
+            # Получаем непрочитанные сообщения для пользователя и отправляем их
             cur.execute("SELECT message, users.username FROM messages JOIN users ON users.id = messages.user_id WHERE recipient_id = ? AND is_read = 0", 
                         (session['user_id'],))
             unread_messages = cur.fetchall()

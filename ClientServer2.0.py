@@ -14,6 +14,7 @@ current_username = None
 user_listbox = None
 all_users = []  # Список всех зарегистрированных пользователей
 private_chat_windows = {}  # Словарь для хранения ссылок на окна приватных чатов
+unread_counts = {}  # Словарь для хранения количества непрочитанных сообщений
 
 def register():
     """Обработчик регистрации нового пользователя."""
@@ -102,6 +103,13 @@ def all_users(users):
     all_users = users
     update_user_listbox()
 
+@sio.event
+def unread_counts(counts):
+    """Обработчик для получения количества непрочитанных сообщений от сервера."""
+    global unread_counts
+    unread_counts = {username: count for username, count in counts}
+    update_user_listbox()
+
 @sio.on('chat_history')
 def handle_chat_history(data):
     username = data['username']
@@ -128,6 +136,7 @@ def private_message(data):
             private_chat_listbox.insert(tk.END, f"{sender}: {message}\n")
             private_chat_listbox.yview(tk.END)
             private_chat_listbox.config(state=tk.DISABLED)
+
 def send_message():
     """Отправка сообщения в общий чат."""
     message = message_entry.get()
@@ -186,16 +195,17 @@ def send_private_message(username):
 
     # Очищаем поле ввода
     private_chat_windows[username]['entry'].delete(0, tk.END)
-    
-
 
 def update_user_listbox():
-    """Обновление списка пользователей."""
-    global user_listbox, all_users
+    """Обновление списка пользователей с учётом количества непрочитанных сообщений."""
+    global user_listbox, all_users, unread_counts
 
     user_listbox.delete(0, tk.END)
     for user in all_users:
-        user_listbox.insert(tk.END, user)
+        display_name = user
+        if user in unread_counts:
+            display_name += f" ({unread_counts[user]} непрочитанных)"
+        user_listbox.insert(tk.END, display_name)
 
 def setup_main_window():
     """Настройка основного окна приложения."""
@@ -225,7 +235,7 @@ def setup_main_window():
     tk.Label(user_frame, text="Пользователи").pack(pady=5)
     user_listbox = tk.Listbox(user_frame)
     user_listbox.pack(padx=10, pady=5, fill=tk.BOTH, expand=True)
-    user_listbox.bind('<Double-1>', lambda event: start_private_chat(user_listbox.get(user_listbox.curselection())))
+    user_listbox.bind('<Double-1>', lambda event: start_private_chat(user_listbox.get(user_listbox.curselection()).split(' ')[0]))
 
     connect_socket()
 
