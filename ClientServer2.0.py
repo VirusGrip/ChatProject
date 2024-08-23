@@ -59,7 +59,7 @@ def open_registration_window():
 
 def login():
     """Обработчик входа пользователя."""
-    global login_window, username_entry, password_entry, token
+    global login_window, username_entry, password_entry, token, current_username
 
     username = username_entry.get()
     password = password_entry.get()
@@ -72,6 +72,7 @@ def login():
         response = requests.post(f"{HOST}/login", json={'username': username, 'password': password})
         if response.status_code == 200:
             token = response.json().get('token')
+            current_username = username  # Сохраняем текущего пользователя
             login_window.destroy()
             login_window = None
             setup_main_window()
@@ -107,21 +108,18 @@ def private_message(data):
     message = data['text']
 
     def update_chat_window():
-        if sender in root.private_chat_windows:
-            private_chat_listbox = root.private_chat_windows[sender]['listbox']
-            
-            if private_chat_listbox.winfo_exists():
-                private_chat_listbox.config(state=tk.NORMAL)
-                private_chat_listbox.insert(tk.END, f"{sender} -> {recipient}: {message}\n")
-                private_chat_listbox.yview(tk.END)
-                private_chat_listbox.config(state=tk.DISABLED)
-            else:
-                print(f"Виджет для чата с {sender} больше не существует.")
-        else:
-            print(f"Окно чата с {sender} не найдено.")
+        # Если чат с отправителем уже открыт, просто обновляем его содержимое
+        if sender not in root.private_chat_windows:
+            start_private_chat(sender)
+
+        # Получаем listbox для существующего чата
+        private_chat_listbox = root.private_chat_windows[sender]['listbox']
+        private_chat_listbox.config(state=tk.NORMAL)
+        private_chat_listbox.insert(tk.END, f"{sender} -> {recipient}: {message}\n")
+        private_chat_listbox.yview(tk.END)
+        private_chat_listbox.config(state=tk.DISABLED)
 
     root.after(0, update_chat_window)
-
 
 @sio.event
 def message(data):
@@ -130,7 +128,6 @@ def message(data):
     chat_box.insert(tk.END, f"{data}\n")
     chat_box.yview(tk.END)
     chat_box.config(state=tk.DISABLED)
-
 
 def send_message():
     """Отправка сообщения в общий чат."""
@@ -141,15 +138,16 @@ def send_message():
     sio.emit('global_message', {'text': message})
     message_entry.delete(0, tk.END)
 
-
 def start_private_chat(username):
     """Начало приватного чата с выбранным пользователем."""
-    global private_chat_window, private_chat_listbox, private_message_entry
+    global private_chat_listbox, private_message_entry
 
     if not hasattr(root, 'private_chat_windows'):
         root.private_chat_windows = {}
 
     if username in root.private_chat_windows:
+        # Фокус на существующее окно чата
+        root.private_chat_windows[username]['window'].lift()
         return  # Чат уже открыт
 
     private_chat_window = tk.Toplevel(root)
@@ -169,13 +167,24 @@ def start_private_chat(username):
         'window': private_chat_window,
         'listbox': private_chat_listbox
     }
+
 def send_private_message(username):
-    """Отправка приватного сообщения."""
+    """Отправка приватного сообщения и отображение его в чате."""
     message = private_message_entry.get()
     if not message:
         return
 
+    # Отправляем сообщение через сокет
     sio.emit('private_message', {'to': username, 'text': message})
+
+    # Добавляем сообщение в существующее окно чата
+    if username in root.private_chat_windows:
+        private_chat_listbox = root.private_chat_windows[username]['listbox']
+        private_chat_listbox.config(state=tk.NORMAL)
+        private_chat_listbox.insert(tk.END, f"Вы -> {username}: {message}\n")
+        private_chat_listbox.yview(tk.END)
+        private_chat_listbox.config(state=tk.DISABLED)
+
     private_message_entry.delete(0, tk.END)
 
 def update_user_listbox():
@@ -192,6 +201,9 @@ def setup_main_window():
 
     root = tk.Tk()
     root.title("Чат")
+
+    # Инициализация атрибута private_chat_windows как словаря
+    root.private_chat_windows = {}
 
     # Окно чата
     chat_frame = tk.Frame(root)
@@ -235,7 +247,7 @@ if __name__ == "__main__":
     login_button = tk.Button(login_window, text="Войти", command=login)
     login_button.pack(padx=10, pady=5)
 
-    register_button = tk.Button(login_window, text="Регистрация", command=open_registration_window)
-    register_button.pack(padx=10, pady=5)
+    reg_button = tk.Button(login_window, text="Регистрация", command=open_registration_window)
+    reg_button.pack(padx=10, pady=5)
 
     login_window.mainloop()

@@ -12,7 +12,6 @@ socketio = SocketIO(app, manage_session=True)
 DATABASE = 'chat.db'
 active_users = {}  # Словарь для хранения активных пользователей и их сессий
 
-# Инициализация базы данных
 def init_db():
     if not os.path.exists(DATABASE):
         conn = sqlite3.connect(DATABASE)
@@ -28,13 +27,16 @@ def init_db():
             CREATE TABLE messages (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 user_id INTEGER,
+                recipient_id INTEGER,
                 message TEXT NOT NULL,
                 timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
-                FOREIGN KEY (user_id) REFERENCES users(id)
+                FOREIGN KEY (user_id) REFERENCES users(id),
+                FOREIGN KEY (recipient_id) REFERENCES users(id)
             )
         ''')
         conn.commit()
         conn.close()
+
 
 # Подключение к базе данных
 def get_db():
@@ -99,16 +101,29 @@ def handle_connect():
             session['username'] = decoded['username']
             active_users[request.sid] = decoded['username']
 
-            # Присоединяем пользователя к общей комнате
             join_room('global_room')
 
-            # Отправляем список всех пользователей клиенту при подключении
+            # Отправляем список всех пользователей
             conn, cur = get_db()
             cur.execute("SELECT username FROM users")
             users = cur.fetchall()
-            conn.close()
+
             user_list = [user[0] for user in users]
             emit('all_users', user_list, to=request.sid)
+
+            # Получаем непрочитанные сообщения для пользователя
+            cur.execute("SELECT message, users.username FROM messages JOIN users ON users.id = messages.user_id WHERE recipient_id = ? AND is_read = 0", 
+                        (session['user_id'],))
+            unread_messages = cur.fetchall()
+
+            for msg, sender in unread_messages:
+                emit('private_message', {'from': sender, 'to': session['username'], 'text': msg})
+
+            # Обновляем статус сообщений как прочитанных
+            cur.execute("UPDATE messages SET is_read = 1 WHERE recipient_id = ?", (session['user_id'],))
+            conn.commit()
+
+            conn.close()
 
             emit('user_list', list(active_users.values()), broadcast=True)
         except jwt.InvalidTokenError:
@@ -160,23 +175,33 @@ def handle_private_message(data):
         send("Ошибка: Вы не авторизованы или не указан получатель", to=request.sid)
         return
 
-    # Формирование уникального имени комнаты для чата
     room = f"room_{min(username, recipient)}_{max(username, recipient)}"
-
-    print(f"Отправка личного сообщения от {username} к {recipient} в комнату {room}")
-
-    # Присоединяем отправителя к комнате (если это нужно)
     join_room(room)
 
-    # Отправляем сообщение только в приватную комнату
-    emit('private_message', {'from': username, 'to': recipient, 'text': message_text, 'room': room}, room=room)
+    # Проверяем, находится ли получатель в сети
+    recipient_sid = next((sid for sid, name in active_users.items() if name == recipient), None)
+    if recipient_sid:
+        emit('private_message', {'from': username, 'to': recipient, 'text': message_text, 'room': room}, room=room)
+        is_read = 1
+    else:
+        is_read = 0
 
     # Сохранение сообщения в базе данных
     user_id = session.get('user_id')
     conn, cur = get_db()
-    cur.execute("INSERT INTO messages (user_id, message) VALUES (?, ?)", (user_id, message_text))
-    conn.commit()
+    cur.execute("SELECT id FROM users WHERE username = ?", (recipient,))
+    recipient_data = cur.fetchone()
+
+    if recipient_data:
+        recipient_id = recipient_data[0]
+        cur.execute("INSERT INTO messages (user_id, recipient_id, message, is_read) VALUES (?, ?, ?, ?)", 
+                    (user_id, recipient_id, message_text, is_read))
+        conn.commit()
+    else:
+        print("Ошибка: Получатель не найден в базе данных")
+
     conn.close()
+
 
 
 # Обработка отключения
