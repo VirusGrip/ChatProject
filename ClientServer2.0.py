@@ -12,9 +12,12 @@ reg_window = None
 root = None
 current_username = None
 user_listbox = None
+chat_box = None
+message_entry = None
 all_users = []  # Список всех зарегистрированных пользователей
 private_chat_windows = {}  # Словарь для хранения ссылок на окна приватных чатов
 unread_counts = {}  # Словарь для хранения количества непрочитанных сообщений
+history_loaded = False  # Флаг для отслеживания загрузки истории сообщений
 
 def register():
     """Обработчик регистрации нового пользователя."""
@@ -99,6 +102,7 @@ def disconnect():
 
 @sio.event
 def all_users(users):
+    """Обработчик для получения списка всех пользователей."""
     global all_users
     all_users = users
     update_user_listbox()
@@ -110,24 +114,22 @@ def unread_counts(counts):
     unread_counts = {username: count for username, count in counts}
     update_user_listbox()
 
-@sio.on('chat_history')
-def handle_chat_history(data):
-    username = data['username']
-    messages = data['messages']
-
-    if username in private_chat_windows:
-        private_chat_listbox = private_chat_windows[username]['listbox']
-        private_chat_listbox.config(state=tk.NORMAL)
-        for msg in messages:
-            private_chat_listbox.insert(tk.END, f"{msg['sender']}: {msg['text']}\n")
-        private_chat_listbox.yview(tk.END)
-        private_chat_listbox.config(state=tk.DISABLED)
+@sio.event
+def global_message(data):
+    """Обработчик для получения сообщений из общего чата."""
+    text = data.get('text')
+    if text:
+        chat_box.config(state=tk.NORMAL)
+        chat_box.insert(tk.END, f"{text}\n")
+        chat_box.yview(tk.END)
+        chat_box.config(state=tk.DISABLED)
 
 @sio.event
 def private_message(data):
-    sender = data['from']
-    recipient = data['to']
-    message = data['text']
+    """Обработчик для получения личных сообщений."""
+    sender = data.get('from')
+    recipient = data.get('to')
+    message = data.get('text')
 
     if recipient == current_username:
         if sender in private_chat_windows:
@@ -136,6 +138,38 @@ def private_message(data):
             private_chat_listbox.insert(tk.END, f"{sender}: {message}\n")
             private_chat_listbox.yview(tk.END)
             private_chat_listbox.config(state=tk.DISABLED)
+        else:
+            # Если чат с этим пользователем не открыт, не делаем ничего
+            pass
+
+@sio.event
+def chat_history(data):
+    """Обработчик для получения истории сообщений."""
+    global history_loaded
+    messages = data.get('messages', [])
+    chat_type = data.get('type', 'unknown')
+    username = data.get('username', '')
+
+    if chat_type == 'global':
+        # Обновляем общий чат только при первом запуске
+        if not history_loaded:
+            chat_box.config(state=tk.NORMAL)
+            for msg in messages:
+                chat_box.insert(tk.END, f"{msg.get('sender', 'Unknown')}: {msg.get('text', '')}\n")
+            chat_box.yview(tk.END)
+            chat_box.config(state=tk.DISABLED)
+            history_loaded = True
+    elif chat_type == 'private':
+        # Обновляем приватный чат
+        if username in private_chat_windows:
+            private_chat_listbox = private_chat_windows[username]['listbox']
+            private_chat_listbox.config(state=tk.NORMAL)
+            for msg in messages:
+                private_chat_listbox.insert(tk.END, f"{msg.get('sender', 'Unknown')}: {msg.get('text', '')}\n")
+            private_chat_listbox.yview(tk.END)
+            private_chat_listbox.config(state=tk.DISABLED)
+    else:
+        print(f"Неизвестный тип чата: {chat_type}")
 
 def send_message():
     """Отправка сообщения в общий чат."""
@@ -179,6 +213,10 @@ def start_private_chat(username):
 
 def send_private_message(username):
     """Отправка приватного сообщения и отображение его в чате."""
+    if username not in private_chat_windows:
+        messagebox.showwarning("Ошибка", f"Чат с {username} не открыт.")
+        return
+
     message = private_chat_windows[username]['entry'].get()
     if not message:
         return
@@ -186,7 +224,7 @@ def send_private_message(username):
     # Отправляем сообщение через сокет
     sio.emit('private_message', {'to': username, 'text': message})
 
-    # Отображаем сообщение в чате как "Вы"
+    # Отображение сообщения в чате как "Вы"
     private_chat_listbox = private_chat_windows[username]['listbox']
     private_chat_listbox.config(state=tk.NORMAL)
     private_chat_listbox.insert(tk.END, f"Вы: {message}\n")
@@ -239,6 +277,11 @@ def setup_main_window():
 
     connect_socket()
 
+    # Запрашиваем историю сообщений общего чата только один раз
+    global history_loaded
+    if not history_loaded:
+        sio.emit('request_chat_history', {'type': 'global'})
+
     root.mainloop()
 
 if __name__ == "__main__":
@@ -249,7 +292,7 @@ if __name__ == "__main__":
     username_entry = tk.Entry(login_window)
     username_entry.pack(padx=10, pady=5)
 
-    tk.Label(login_window, text="Пароль"). pack(pady=5)
+    tk.Label(login_window, text="Пароль").pack(pady=5)
     password_entry = tk.Entry(login_window, show='*')
     password_entry.pack(padx=10, pady=5)
 

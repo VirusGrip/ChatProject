@@ -37,6 +37,7 @@ def init_db():
         ''')
         conn.commit()
         conn.close()
+
 def get_chat_history(user_id, recipient_id):
     conn, cur = get_db()
     cur.execute("""
@@ -51,13 +52,22 @@ def get_chat_history(user_id, recipient_id):
     conn.close()
     return chat_history
 
+def get_global_chat_history():
+    conn, cur = get_db()
+    cur.execute("""
+        SELECT users.username, messages.message, messages.timestamp
+        FROM messages
+        JOIN users ON messages.user_id = users.id
+        ORDER BY messages.timestamp ASC
+    """)
+    chat_history = cur.fetchall()
+    conn.close()
+    return chat_history
 
-# Подключение к базе данных
 def get_db():
     conn = sqlite3.connect(DATABASE)
     return conn, conn.cursor()
 
-# Регистрация пользователя
 @app.route('/register', methods=['POST'])
 def register():
     data = request.json
@@ -75,7 +85,6 @@ def register():
     finally:
         conn.close()
 
-# Вход пользователя
 @app.route('/login', methods=['POST'])
 def login():
     data = request.json
@@ -88,13 +97,11 @@ def login():
     conn.close()
 
     if user and check_password_hash(user[2], password):
-        # Генерация JWT токена
         token = jwt.encode({'user_id': user[0], 'username': username}, app.secret_key, algorithm='HS256')
         return jsonify({'token': token}), 200
     else:
         return jsonify({'message': 'Неправильный логин или пароль'}), 400
 
-# Получение списка всех пользователей
 @app.route('/all_users', methods=['GET'])
 def get_all_users():
     conn, cur = get_db()
@@ -117,15 +124,12 @@ def handle_connect():
 
             join_room('global_room')
 
-            # Отправляем список всех пользователей
             conn, cur = get_db()
             cur.execute("SELECT username FROM users")
             users = cur.fetchall()
-
             user_list = [user[0] for user in users]
             emit('all_users', user_list, to=request.sid)
 
-            # Получаем количество непрочитанных сообщений от каждого пользователя
             cur.execute("""
                 SELECT users.username, COUNT(messages.id) as unread_count
                 FROM messages
@@ -136,21 +140,21 @@ def handle_connect():
             unread_counts = cur.fetchall()
             emit('unread_counts', unread_counts, room=request.sid)
 
-            # Получаем непрочитанные сообщения для пользователя и отправляем их
             cur.execute("SELECT message, users.username FROM messages JOIN users ON users.id = messages.user_id WHERE recipient_id = ? AND is_read = 0", 
                         (session['user_id'],))
             unread_messages = cur.fetchall()
-
             for msg, sender in unread_messages:
                 emit('private_message', {'from': sender, 'to': session['username'], 'text': msg})
 
-            # Обновляем статус сообщений как прочитанных
             cur.execute("UPDATE messages SET is_read = 1 WHERE recipient_id = ?", (session['user_id'],))
             conn.commit()
-
             conn.close()
 
             emit('user_list', list(active_users.values()), broadcast=True)
+
+            # Запрашиваем историю сообщений общего чата
+            emit('request_chat_history', {'type': 'global'}, room=request.sid)
+
         except jwt.InvalidTokenError:
             send("Ошибка: Неверный токен", to=request.sid)
             return
@@ -158,22 +162,59 @@ def handle_connect():
         send("Ошибка: Вы не авторизованы", to=request.sid)
         return
 
+
 @socketio.on('global_message')
 def handle_global_message(data):
     username = session.get('username')
     message_text = data.get('text')
 
-    # Отправка сообщения всем пользователям в общей комнате
-    emit('message', f"[{username}] {message_text}", room='global_room')
+    if username and message_text:
+        emit('global_message', {'text': f"[{username}] {message_text}"}, room='global_room')
 
-    # Сохранение сообщения в базе данных
-    user_id = session.get('user_id')
-    if user_id:
+        user_id = session.get('user_id')
+        if user_id:
+            conn, cur = get_db()
+            cur.execute("INSERT INTO messages (user_id, message) VALUES (?, ?)", (user_id, message_text))
+            conn.commit()
+            conn.close()
+    else:
+        emit('error', {'message': 'Ошибка: Вы не авторизованы или текст сообщения пустой'})
+
+
+@socketio.on('request_chat_history')
+def handle_request_chat_history(data):
+    chat_type = data.get('type')
+    
+    if chat_type == 'global':
+        chat_history = get_global_chat_history()
+        formatted_history = [{'sender': sender, 'text': message, 'timestamp': timestamp} for sender, message, timestamp in chat_history]
+        emit('chat_history', {'type': 'global', 'messages': formatted_history}, room=request.sid)
+    elif chat_type == 'private':
+        recipient_username = data.get('username')
+        if not recipient_username:
+            emit('error', {'message': 'Пользователь не указан'})
+            return
+
         conn, cur = get_db()
-        cur.execute("INSERT INTO messages (user_id, message) VALUES (?, ?)", (user_id, message_text))
-        conn.commit()
+        cur.execute("SELECT id FROM users WHERE username = ?", (recipient_username,))
+        recipient = cur.fetchone()
+
+        if not recipient:
+            emit('error', {'message': 'Пользователь не найден'})
+            return
+
+        recipient_id = recipient[0]
+        user_id = session['user_id']
+
+        chat_history = get_chat_history(user_id, recipient_id)
+        formatted_history = [{'sender': sender, 'text': msg, 'timestamp': timestamp} for msg, timestamp, sender in chat_history]
+
+        emit('chat_history', {'username': recipient_username, 'messages': formatted_history, 'type': 'private'}, room=request.sid)
         conn.close()
-# Обработка выбора пользователя для чата
+    else:
+        emit('error', {'message': 'Неверный тип чата: ' + chat_type})
+
+
 @socketio.on('select_user')
 def handle_select_user(data):
     selected_user = data.get('username')
@@ -183,7 +224,6 @@ def handle_select_user(data):
 
     selected_sid = next((sid for sid, name in active_users.items() if name == selected_user), None)
     if selected_sid:
-        # Формирование уникального имени комнаты
         room = f"room_{min(session['username'], selected_user)}_{max(session['username'], selected_user)}"
         join_room(room)
         emit('chat_started', {'room': room, 'username': selected_user}, room=request.sid)
@@ -196,22 +236,20 @@ def handle_private_message(data):
     recipient = data.get('to')
     message_text = data.get('text')
 
-    if not username or not recipient:
+    if not username or not recipient or not message_text:
         emit('error', {'message': 'Ошибка: Вы не авторизованы или не указан получатель'})
         return
 
     room = f"room_{min(username, recipient)}_{max(username, recipient)}"
     join_room(room)
 
-    # Проверяем, находится ли получатель в сети
     recipient_sid = next((sid for sid, name in active_users.items() if name == recipient), None)
     if recipient_sid:
-        emit('private_message', {'from': username, 'to': recipient, 'text': message_text, 'room': room}, room=room)
+        emit('private_message', {'from': username, 'to': recipient, 'text': message_text}, room=room)
         is_read = 1
     else:
         is_read = 0
 
-    # Сохранение сообщения в базе данных
     user_id = session.get('user_id')
     conn, cur = get_db()
     cur.execute("SELECT id FROM users WHERE username = ?", (recipient,))
@@ -245,31 +283,24 @@ def handle_start_private_chat(data):
     recipient_id = recipient[0]
     user_id = session['user_id']
 
-    # Получаем историю чата
     chat_history = get_chat_history(user_id, recipient_id)
     formatted_history = [{'sender': sender, 'text': msg, 'timestamp': timestamp} for msg, timestamp, sender in chat_history]
 
-    emit('chat_history', {'username': recipient_username, 'messages': formatted_history}, room=request.sid)
+    emit('chat_history', {'username': recipient_username, 'messages': formatted_history, 'type': 'private'}, room=request.sid)
 
     conn.close()
 
-
-
-# Обработка отключения
 @socketio.on('disconnect')
 def handle_disconnect():
     username = active_users.pop(request.sid, None)
     if username:
-        # Оповещаем всех клиентов об обновлении списка пользователей
         emit('user_list', list(active_users.values()), broadcast=True)
         print(f"Пользователь {username} отключен, session ID: {request.sid}")
 
-        # Удаление пользователя из всех комнат
         for room in list(socketio.server.manager.rooms.keys()):
             if room.startswith(f"room_{username}_") or room.endswith(f"_{username}"):
                 leave_room(room)
 
-# Запуск сервера
 if __name__ == '__main__':
     init_db()
     socketio.run(app, host='10.1.3.187', port=12345)
