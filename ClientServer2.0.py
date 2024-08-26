@@ -116,19 +116,22 @@ def unread_counts(counts):
     if isinstance(counts, list):
         # Преобразуем список кортежей в словарь
         unread_counts = dict(counts)
+    elif isinstance(counts, dict):
+        # Если данные уже в виде словаря, просто присваиваем их
+        unread_counts = counts
     else:
-        print(f"Неожиданный формат данных о непрочитанных сообщениях: {counts}")
+        print(f"Неизвестный формат данных о непрочитанных сообщениях: {counts}")
 
     root.after(0, update_user_listbox)
-
 
 @sio.event
 def global_message(data):
     """Обработчик для получения сообщений из общего чата."""
     text = data.get('text')
+    sender = data.get('sender')
     if text:
         chat_box.config(state=tk.NORMAL)
-        chat_box.insert(tk.END, f"{text}\n")
+        chat_box.insert(tk.END, f"{sender}: {text}\n")
         chat_box.yview(tk.END)
         chat_box.config(state=tk.DISABLED)
 
@@ -139,7 +142,9 @@ def private_message(data):
     recipient = data.get('to')
     message = data.get('text')
 
+    # Проверяем, если сообщение пришло вам
     if recipient == current_username:
+        # Обработка отображения сообщения в приватном чате
         if sender in private_chat_windows:
             private_chat_listbox = private_chat_windows[sender]['listbox']
             private_chat_listbox.config(state=tk.NORMAL)
@@ -147,8 +152,14 @@ def private_message(data):
             private_chat_listbox.yview(tk.END)
             private_chat_listbox.config(state=tk.DISABLED)
         else:
-            # Если чат с этим пользователем не открыт, не делаем ничего
+            # Если чат с этим пользователем не открыт, ничего не делаем
             pass
+
+        # Обновляем количество непрочитанных сообщений для получателя,
+        # если сообщение пришло не от текущего пользователя
+        if sender != current_username:
+            unread_counts[sender] = unread_counts.get(sender, 0) + 1
+            root.after(0, update_user_listbox)
 
 @sio.event
 def chat_history(data):
@@ -185,7 +196,7 @@ def send_message():
     if not message:
         return
 
-    sio.emit('global_message', {'text': message})
+    sio.emit('global_message', {'text': message, 'sender': current_username})
     message_entry.delete(0, tk.END)
 
 def start_private_chat(username):
@@ -216,11 +227,11 @@ def start_private_chat(username):
         'entry': private_message_entry
     }
 
-    # Запрашиваем историю сообщений
-    sio.emit('start_private_chat', {'username': username})
+    # Запрашиваем историю сообщений для этого пользователя
+    sio.emit('request_chat_history', {'type': 'private', 'username': username})
 
 def send_private_message(username):
-    """Отправка приватного сообщения и отображение его в чате."""
+    """Отправка личного сообщения."""
     if username not in private_chat_windows:
         messagebox.showwarning("Ошибка", f"Чат с {username} не открыт.")
         return
@@ -229,18 +240,20 @@ def send_private_message(username):
     if not message:
         return
 
-    # Отправляем сообщение через сокет
-    sio.emit('private_message', {'to': username, 'text': message})
+    sio.emit('private_message', {'to': username, 'text': message, 'from': current_username})
 
-    # Отображение сообщения в чате как "Вы"
     private_chat_listbox = private_chat_windows[username]['listbox']
     private_chat_listbox.config(state=tk.NORMAL)
-    private_chat_listbox.insert(tk.END, f"Вы: {message}\n")
+    private_chat_listbox.insert(tk.END, f"{current_username}: {message}\n")
     private_chat_listbox.yview(tk.END)
     private_chat_listbox.config(state=tk.DISABLED)
 
-    # Очищаем поле ввода
     private_chat_windows[username]['entry'].delete(0, tk.END)
+
+    # Сбрасываем счетчик непрочитанных сообщений у получателя, если чат открыт
+    if username in unread_counts:
+        unread_counts[username] = unread_counts.get(username, 0)
+        root.after(0, update_user_listbox)
 
 def update_user_listbox():
     """Обновление списка пользователей с учётом количества непрочитанных сообщений."""

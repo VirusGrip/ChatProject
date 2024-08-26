@@ -139,6 +139,7 @@ def handle_connect():
             user_list = [user[0] for user in users]
             emit('all_users', user_list, to=request.sid)
 
+            # Получаем количество непрочитанных сообщений
             cur.execute("""
                 SELECT users.username, COUNT(private_messages.id) as unread_count
                 FROM private_messages
@@ -149,19 +150,19 @@ def handle_connect():
             unread_counts = cur.fetchall()
             emit('unread_counts', unread_counts, room=request.sid)
 
+            # Отправляем непрочитанные сообщения
             cur.execute("SELECT message, users.username FROM private_messages JOIN users ON users.id = private_messages.user_id WHERE recipient_id = ? AND is_read = 0", 
                         (session['user_id'],))
             unread_messages = cur.fetchall()
             for msg, sender in unread_messages:
                 emit('private_message', {'from': sender, 'to': session['username'], 'text': msg})
 
+            # Помечаем все непрочитанные сообщения как прочитанные
             cur.execute("UPDATE private_messages SET is_read = 1 WHERE recipient_id = ?", (session['user_id'],))
             conn.commit()
             conn.close()
 
             emit('user_list', list(active_users.values()), broadcast=True)
-
-            # Запрашиваем историю сообщений общего чата
             emit('request_chat_history', {'type': 'global'}, room=request.sid)
 
         except jwt.InvalidTokenError:
@@ -255,7 +256,7 @@ def handle_private_message(data):
     recipient_sid = next((sid for sid, name in active_users.items() if name == recipient), None)
     if recipient_sid:
         emit('private_message', {'from': username, 'to': recipient, 'text': message_text}, room=room)
-        is_read = 1
+        is_read = 0
     else:
         is_read = 0
 
@@ -269,10 +270,19 @@ def handle_private_message(data):
         cur.execute("INSERT INTO private_messages (user_id, recipient_id, message, is_read) VALUES (?, ?, ?, ?)", 
                     (user_id, recipient_id, message_text, is_read))
         conn.commit()
+
+        # Обновляем количество непрочитанных сообщений для получателя
+        cur.execute("""
+            SELECT COUNT(id) FROM private_messages
+            WHERE recipient_id = ? AND is_read = 0
+        """, (recipient_id,))
+        unread_count = cur.fetchone()[0]
+        emit('unread_counts', {recipient: unread_count}, room=recipient_sid)
     else:
         emit('error', {'message': 'Ошибка: Получатель не найден в базе данных'})
 
     conn.close()
+
 
 @socketio.on('start_private_chat')
 def handle_start_private_chat(data):
