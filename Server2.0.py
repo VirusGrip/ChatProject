@@ -24,7 +24,16 @@ def init_db():
             )
         ''')
         cursor.execute('''
-            CREATE TABLE messages (
+            CREATE TABLE global_messages (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER,
+                message TEXT NOT NULL,
+                timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (user_id) REFERENCES users(id)
+            )
+        ''')
+        cursor.execute('''
+            CREATE TABLE private_messages (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 user_id INTEGER,
                 recipient_id INTEGER,
@@ -41,12 +50,12 @@ def init_db():
 def get_chat_history(user_id, recipient_id):
     conn, cur = get_db()
     cur.execute("""
-        SELECT messages.message, messages.timestamp, sender.username as sender
-        FROM messages
-        JOIN users AS sender ON messages.user_id = sender.id
-        WHERE (messages.user_id = ? AND messages.recipient_id = ?)
-           OR (messages.user_id = ? AND messages.recipient_id = ?)
-        ORDER BY messages.timestamp ASC
+        SELECT private_messages.message, private_messages.timestamp, sender.username as sender
+        FROM private_messages
+        JOIN users AS sender ON private_messages.user_id = sender.id
+        WHERE (private_messages.user_id = ? AND private_messages.recipient_id = ?)
+           OR (private_messages.user_id = ? AND private_messages.recipient_id = ?)
+        ORDER BY private_messages.timestamp ASC
     """, (user_id, recipient_id, recipient_id, user_id))
     chat_history = cur.fetchall()
     conn.close()
@@ -55,10 +64,10 @@ def get_chat_history(user_id, recipient_id):
 def get_global_chat_history():
     conn, cur = get_db()
     cur.execute("""
-        SELECT users.username, messages.message, messages.timestamp
-        FROM messages
-        JOIN users ON messages.user_id = users.id
-        ORDER BY messages.timestamp ASC
+        SELECT users.username, global_messages.message, global_messages.timestamp
+        FROM global_messages
+        JOIN users ON global_messages.user_id = users.id
+        ORDER BY global_messages.timestamp ASC
     """)
     chat_history = cur.fetchall()
     conn.close()
@@ -131,22 +140,22 @@ def handle_connect():
             emit('all_users', user_list, to=request.sid)
 
             cur.execute("""
-                SELECT users.username, COUNT(messages.id) as unread_count
-                FROM messages
-                JOIN users ON users.id = messages.user_id
-                WHERE messages.recipient_id = ? AND messages.is_read = 0
+                SELECT users.username, COUNT(private_messages.id) as unread_count
+                FROM private_messages
+                JOIN users ON users.id = private_messages.user_id
+                WHERE private_messages.recipient_id = ? AND private_messages.is_read = 0
                 GROUP BY users.username
             """, (session['user_id'],))
             unread_counts = cur.fetchall()
             emit('unread_counts', unread_counts, room=request.sid)
 
-            cur.execute("SELECT message, users.username FROM messages JOIN users ON users.id = messages.user_id WHERE recipient_id = ? AND is_read = 0", 
+            cur.execute("SELECT message, users.username FROM private_messages JOIN users ON users.id = private_messages.user_id WHERE recipient_id = ? AND is_read = 0", 
                         (session['user_id'],))
             unread_messages = cur.fetchall()
             for msg, sender in unread_messages:
                 emit('private_message', {'from': sender, 'to': session['username'], 'text': msg})
 
-            cur.execute("UPDATE messages SET is_read = 1 WHERE recipient_id = ?", (session['user_id'],))
+            cur.execute("UPDATE private_messages SET is_read = 1 WHERE recipient_id = ?", (session['user_id'],))
             conn.commit()
             conn.close()
 
@@ -174,7 +183,7 @@ def handle_global_message(data):
         user_id = session.get('user_id')
         if user_id:
             conn, cur = get_db()
-            cur.execute("INSERT INTO messages (user_id, message) VALUES (?, ?)", (user_id, message_text))
+            cur.execute("INSERT INTO global_messages (user_id, message) VALUES (?, ?)", (user_id, message_text))
             conn.commit()
             conn.close()
     else:
@@ -257,7 +266,7 @@ def handle_private_message(data):
 
     if recipient_data:
         recipient_id = recipient_data[0]
-        cur.execute("INSERT INTO messages (user_id, recipient_id, message, is_read) VALUES (?, ?, ?, ?)", 
+        cur.execute("INSERT INTO private_messages (user_id, recipient_id, message, is_read) VALUES (?, ?, ?, ?)", 
                     (user_id, recipient_id, message_text, is_read))
         conn.commit()
     else:

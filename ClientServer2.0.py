@@ -105,14 +105,22 @@ def all_users(users):
     """Обработчик для получения списка всех пользователей."""
     global all_users
     all_users = users
-    update_user_listbox()
+    # Обновляем список пользователей в основном потоке
+    root.after(0, update_user_listbox)
 
 @sio.event
 def unread_counts(counts):
     """Обработчик для получения количества непрочитанных сообщений от сервера."""
     global unread_counts
-    unread_counts = {username: count for username, count in counts}
-    update_user_listbox()
+
+    # Проверяем, является ли counts списком
+    if isinstance(counts, list):
+        unread_counts = {username: count for username, count in enumerate(counts)}
+    else:
+        unread_counts = {username: count for username, count in counts.items()}
+
+    # Обновляем список пользователей в основном потоке
+    root.after(0, update_user_listbox)
 
 @sio.event
 def global_message(data):
@@ -242,7 +250,9 @@ def update_user_listbox():
     for user in all_users:
         display_name = user
         if user in unread_counts:
-            display_name += f" ({unread_counts[user]} непрочитанных)"
+            unread_count = unread_counts[user]
+            if unread_count > 0:
+                display_name += f" ({unread_count} непрочитанных)"
         user_listbox.insert(tk.END, display_name)
 
 def setup_main_window():
