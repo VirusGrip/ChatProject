@@ -172,15 +172,14 @@ def handle_connect():
         send("Ошибка: Вы не авторизованы", to=request.sid)
         return
 
-
 @socketio.on('global_message')
 def handle_global_message(data):
     username = session.get('username')
     message_text = data.get('text')
 
     if username and message_text:
-        emit('global_message', {'text': f"[{username}] {message_text}"}, room='global_room')
-
+        emit('global_message', {'sender': username, 'text': message_text}, room='global_room')  # Измените здесь
+        # Сохраняем сообщение в базе данных
         user_id = session.get('user_id')
         if user_id:
             conn, cur = get_db()
@@ -189,7 +188,6 @@ def handle_global_message(data):
             conn.close()
     else:
         emit('error', {'message': 'Ошибка: Вы не авторизованы или текст сообщения пустой'})
-
 
 @socketio.on('request_chat_history')
 def handle_request_chat_history(data):
@@ -223,7 +221,6 @@ def handle_request_chat_history(data):
         conn.close()
     else:
         emit('error', {'message': 'Неверный тип чата: ' + chat_type})
-
 
 @socketio.on('select_user')
 def handle_select_user(data):
@@ -282,7 +279,6 @@ def handle_private_message(data):
         emit('error', {'message': 'Ошибка: Получатель не найден в базе данных'})
 
     conn.close()
-
 
 @socketio.on('start_private_chat')
 def handle_start_private_chat(data):

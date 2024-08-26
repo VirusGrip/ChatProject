@@ -127,14 +127,15 @@ def unread_counts(counts):
 @sio.event
 def global_message(data):
     """Обработчик для получения сообщений из общего чата."""
-    text = data.get('text')
-    sender = data.get('sender')
-    if text:
+    if 'text' in data and 'sender' in data:
+        text = data['text']
+        sender = data['sender']
         chat_box.config(state=tk.NORMAL)
         chat_box.insert(tk.END, f"{sender}: {text}\n")
         chat_box.yview(tk.END)
         chat_box.config(state=tk.DISABLED)
-
+    else:
+        print(f"Получено некорректное сообщение: {data}")
 @sio.event
 def private_message(data):
     """Обработчик для получения личных сообщений."""
