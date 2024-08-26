@@ -113,14 +113,14 @@ def unread_counts(counts):
     """Обработчик для получения количества непрочитанных сообщений от сервера."""
     global unread_counts
 
-    # Проверяем, является ли counts списком
     if isinstance(counts, list):
-        unread_counts = {username: count for username, count in enumerate(counts)}
+        # Преобразуем список кортежей в словарь
+        unread_counts = dict(counts)
     else:
-        unread_counts = {username: count for username, count in counts.items()}
+        print(f"Неожиданный формат данных о непрочитанных сообщениях: {counts}")
 
-    # Обновляем список пользователей в основном потоке
     root.after(0, update_user_listbox)
+
 
 @sio.event
 def global_message(data):
