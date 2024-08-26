@@ -19,6 +19,13 @@ private_chat_windows = {}  # Словарь для хранения ссылок
 unread_counts = {}  # Словарь для хранения количества непрочитанных сообщений
 history_loaded = False  # Флаг для отслеживания загрузки истории сообщений
 
+# Цвета и шрифты
+BG_COLOR = "#f0f0f0"
+TEXT_COLOR = "#333333"
+BUTTON_COLOR = "#007bff"
+BUTTON_HOVER_COLOR = "#0056b3"
+ENTRY_BG_COLOR = "#ffffff"
+
 def register():
     """Обработчик регистрации нового пользователя."""
     global reg_window, reg_username_entry, reg_password_entry
@@ -47,20 +54,25 @@ def open_registration_window():
 
     reg_window = tk.Toplevel(login_window)
     reg_window.title("Регистрация")
+    reg_window.configure(bg=BG_COLOR)
 
-    tk.Label(reg_window, text="Логин").pack(pady=5)
-    reg_username_entry = tk.Entry(reg_window)
+    tk.Label(reg_window, text="Логин", bg=BG_COLOR, fg=TEXT_COLOR, font=("Arial", 12)).pack(pady=5)
+    reg_username_entry = tk.Entry(reg_window, bg=ENTRY_BG_COLOR, font=("Arial", 12))
     reg_username_entry.pack(padx=10, pady=5)
 
-    tk.Label(reg_window, text="Пароль").pack(pady=5)
-    reg_password_entry = tk.Entry(reg_window, show='*')
+    tk.Label(reg_window, text="Пароль", bg=BG_COLOR, fg=TEXT_COLOR, font=("Arial", 12)).pack(pady=5)
+    reg_password_entry = tk.Entry(reg_window, show='*', bg=ENTRY_BG_COLOR, font=("Arial", 12))
     reg_password_entry.pack(padx=10, pady=5)
 
-    register_button = tk.Button(reg_window, text="Зарегистрироваться", command=register)
+    register_button = tk.Button(reg_window, text="Зарегистрироваться", command=register, bg=BUTTON_COLOR, fg="white", font=("Arial", 12))
     register_button.pack(padx=10, pady=5)
+    register_button.bind("<Enter>", lambda e: register_button.config(bg=BUTTON_HOVER_COLOR))
+    register_button.bind("<Leave>", lambda e: register_button.config(bg=BUTTON_COLOR))
 
-    cancel_button = tk.Button(reg_window, text="Отмена", command=reg_window.destroy)
+    cancel_button = tk.Button(reg_window, text="Отмена", command=reg_window.destroy, bg=BUTTON_COLOR, fg="white", font=("Arial", 12))
     cancel_button.pack(padx=10, pady=5)
+    cancel_button.bind("<Enter>", lambda e: cancel_button.config(bg=BUTTON_HOVER_COLOR))
+    cancel_button.bind("<Leave>", lambda e: cancel_button.config(bg=BUTTON_COLOR))
 
 def login():
     """Обработчик входа пользователя."""
@@ -136,6 +148,7 @@ def global_message(data):
         chat_box.config(state=tk.DISABLED)
     else:
         print(f"Получено некорректное сообщение: {data}")
+
 @sio.event
 def private_message(data):
     """Обработчик для получения личных сообщений."""
@@ -218,16 +231,19 @@ def start_private_chat(username):
     # Создаем новое окно чата
     private_chat_window = tk.Toplevel(root)
     private_chat_window.title(f"Чат с {username}")
+    private_chat_window.configure(bg=BG_COLOR)
 
-    private_chat_listbox = scrolledtext.ScrolledText(private_chat_window, state=tk.DISABLED)
+    private_chat_listbox = scrolledtext.ScrolledText(private_chat_window, state=tk.DISABLED, bg=ENTRY_BG_COLOR, font=("Arial", 12))
     private_chat_listbox.pack(padx=10, pady=10, fill=tk.BOTH, expand=True)
 
-    private_message_entry = tk.Entry(private_chat_window)
+    private_message_entry = tk.Entry(private_chat_window, bg=ENTRY_BG_COLOR, font=("Arial", 12))
     private_message_entry.pack(padx=10, pady=5, fill=tk.X, expand=True)
     private_message_entry.bind('<Return>', lambda event: send_private_message(username))
 
-    send_button = tk.Button(private_chat_window, text="Отправить", command=lambda: send_private_message(username))
+    send_button = tk.Button(private_chat_window, text="Отправить", command=lambda: send_private_message(username), bg=BUTTON_COLOR, fg="white", font=("Arial", 12))
     send_button.pack(padx=10, pady=5)
+    send_button.bind("<Enter>", lambda e: send_button.config(bg=BUTTON_HOVER_COLOR))
+    send_button.bind("<Leave>", lambda e: send_button.config(bg=BUTTON_COLOR))
 
     # Сохраняем ссылку на новое окно чата
     private_chat_windows[username] = {
@@ -287,29 +303,41 @@ def setup_main_window():
 
     root = tk.Tk()
     root.title("Чат")
+    root.configure(bg=BG_COLOR)
 
-    # Окно чата
-    chat_frame = tk.Frame(root)
-    chat_frame.pack(padx=10, pady=10, fill=tk.BOTH, expand=True)
+    # Настройка строк и столбцов для динамического изменения размеров
+    root.grid_rowconfigure(0, weight=1)
+    root.grid_rowconfigure(1, weight=0)
+    root.grid_columnconfigure(0, weight=1)
 
-    chat_box = scrolledtext.ScrolledText(chat_frame, state=tk.DISABLED)
-    chat_box.pack(padx=10, pady=5, fill=tk.BOTH, expand=True)
+    # Фрейм для списка пользователей
+    user_frame = tk.Frame(root, bg=BG_COLOR)
+    user_frame.grid(row=0, column=0, rowspan=2, sticky="nsw", padx=10, pady=10)
 
-    message_entry = tk.Entry(root)
-    message_entry.pack(padx=10, pady=5, fill=tk.X, expand=True)
-    message_entry.bind('<Return>', lambda event: send_message())
-
-    send_button = tk.Button(root, text="Отправить", command=send_message)
-    send_button.pack(padx=10, pady=5)
-
-    # Список пользователей
-    user_frame = tk.Frame(root)
-    user_frame.pack(padx=10, pady=5, fill=tk.Y, side=tk.LEFT)
-
-    tk.Label(user_frame, text="Пользователи").pack(pady=5)
-    user_listbox = tk.Listbox(user_frame)
+    tk.Label(user_frame, text="Пользователи", bg=BG_COLOR, fg=TEXT_COLOR, font=("Arial", 12)).pack(pady=5)
+    user_listbox = tk.Listbox(user_frame, bg=ENTRY_BG_COLOR, font=("Arial", 12))
     user_listbox.pack(padx=10, pady=5, fill=tk.BOTH, expand=True)
     user_listbox.bind('<Double-1>', lambda event: start_private_chat(user_listbox.get(user_listbox.curselection()).split(' ')[0]))
+
+    # Фрейм для чата
+    chat_frame = tk.Frame(root, bg=BG_COLOR)
+    chat_frame.grid(row=0, column=1, sticky="nsew", padx=10, pady=10)
+
+    chat_box = scrolledtext.ScrolledText(chat_frame, state=tk.DISABLED, bg=ENTRY_BG_COLOR, font=("Arial", 12))
+    chat_box.pack(padx=10, pady=5, fill=tk.BOTH, expand=True)
+
+    # Фрейм для ввода сообщений и кнопки отправки
+    input_frame = tk.Frame(root, bg=BG_COLOR)
+    input_frame.grid(row=1, column=1, sticky="ew", padx=10, pady=10)
+
+    message_entry = tk.Text(input_frame, height=3, bg=ENTRY_BG_COLOR, font=("Arial", 12))
+    message_entry.pack(side=tk.LEFT, padx=10, pady=5, fill=tk.BOTH, expand=True)
+    message_entry.bind('<Return>', lambda event: send_message())
+
+    send_button = tk.Button(input_frame, text="Отправить", command=send_message, bg=BUTTON_COLOR, fg="white", font=("Arial", 12))
+    send_button.pack(side=tk.RIGHT, padx=10, pady=5)
+    send_button.bind("<Enter>", lambda e: send_button.config(bg=BUTTON_HOVER_COLOR))
+    send_button.bind("<Leave>", lambda e: send_button.config(bg=BUTTON_COLOR))
 
     connect_socket()
 
@@ -323,19 +351,24 @@ def setup_main_window():
 if __name__ == "__main__":
     login_window = tk.Tk()
     login_window.title("Вход")
+    login_window.configure(bg=BG_COLOR)
 
-    tk.Label(login_window, text="Логин").pack(pady=5)
-    username_entry = tk.Entry(login_window)
+    tk.Label(login_window, text="Логин", bg=BG_COLOR, fg=TEXT_COLOR, font=("Arial", 12)).pack(pady=5)
+    username_entry = tk.Entry(login_window, bg=ENTRY_BG_COLOR, font=("Arial", 12))
     username_entry.pack(padx=10, pady=5)
 
-    tk.Label(login_window, text="Пароль").pack(pady=5)
-    password_entry = tk.Entry(login_window, show='*')
+    tk.Label(login_window, text="Пароль", bg=BG_COLOR, fg=TEXT_COLOR, font=("Arial", 12)).pack(pady=5)
+    password_entry = tk.Entry(login_window, show='*', bg=ENTRY_BG_COLOR, font=("Arial", 12))
     password_entry.pack(padx=10, pady=5)
 
-    login_button = tk.Button(login_window, text="Войти", command=login)
+    login_button = tk.Button(login_window, text="Войти", command=login, bg=BUTTON_COLOR, fg="white", font=("Arial", 12))
     login_button.pack(padx=10, pady=5)
+    login_button.bind("<Enter>", lambda e: login_button.config(bg=BUTTON_HOVER_COLOR))
+    login_button.bind("<Leave>", lambda e: login_button.config(bg=BUTTON_COLOR))
 
-    reg_button = tk.Button(login_window, text="Регистрация", command=open_registration_window)
+    reg_button = tk.Button(login_window, text="Регистрация", command=open_registration_window, bg=BUTTON_COLOR, fg="white", font=("Arial", 12))
     reg_button.pack(padx=10, pady=5)
+    reg_button.bind("<Enter>", lambda e: reg_button.config(bg=BUTTON_HOVER_COLOR))
+    reg_button.bind("<Leave>", lambda e: reg_button.config(bg=BUTTON_COLOR))
 
     login_window.mainloop()
