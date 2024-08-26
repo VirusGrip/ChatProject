@@ -201,13 +201,20 @@ def send_message():
 
 def start_private_chat(username):
     """Начало приватного чата с выбранным пользователем и загрузка истории."""
-    global private_chat_windows
+    global private_chat_windows, unread_counts
 
+    # Проверяем, существует ли окно для данного пользователя
     if username in private_chat_windows:
-        # Если чат с пользователем уже открыт, просто фокусируемся на нем
-        private_chat_windows[username]['window'].lift()
-        return
+        chat_window = private_chat_windows[username]['window']
+        if chat_window.winfo_exists():
+            # Окно существует, фокусируемся на нем
+            chat_window.lift()
+            return
+        else:
+            # Окно закрыто, удаляем запись
+            del private_chat_windows[username]
 
+    # Создаем новое окно чата
     private_chat_window = tk.Toplevel(root)
     private_chat_window.title(f"Чат с {username}")
 
@@ -221,6 +228,7 @@ def start_private_chat(username):
     send_button = tk.Button(private_chat_window, text="Отправить", command=lambda: send_private_message(username))
     send_button.pack(padx=10, pady=5)
 
+    # Сохраняем ссылку на новое окно чата
     private_chat_windows[username] = {
         'window': private_chat_window,
         'listbox': private_chat_listbox,
@@ -229,6 +237,11 @@ def start_private_chat(username):
 
     # Запрашиваем историю сообщений для этого пользователя
     sio.emit('request_chat_history', {'type': 'private', 'username': username})
+
+    # Убираем значок уведомления и сбрасываем количество непрочитанных сообщений
+    if username in unread_counts:
+        unread_counts[username] = 0
+        root.after(0, update_user_listbox)
 
 def send_private_message(username):
     """Отправка личного сообщения."""
@@ -262,10 +275,9 @@ def update_user_listbox():
     user_listbox.delete(0, tk.END)
     for user in all_users:
         display_name = user
-        if user in unread_counts:
-            unread_count = unread_counts[user]
-            if unread_count > 0:
-                display_name += f" ({unread_count} непрочитанных)"
+        # Отображаем знак "!" если есть непрочитанные сообщения и чат с пользователем не открыт
+        if user in unread_counts and unread_counts[user] > 0 and user not in private_chat_windows:
+            display_name += " !"
         user_listbox.insert(tk.END, display_name)
 
 def setup_main_window():
