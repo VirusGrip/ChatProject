@@ -1,15 +1,16 @@
 import socketio
-import tkinter as tk
-from tkinter import scrolledtext, messagebox
 import requests
+from PySide6.QtWidgets import QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel, QLineEdit, QTextEdit, QListWidget, QMessageBox, QDialog
+from PySide6.QtCore import Qt, QTimer
+from PySide6.QtGui import QTextCursor
 
-HOST = 'http://10.1.3.187:12345'
+HOST = 'http://192.168.1.127:12345'
 sio = socketio.Client()
 token = None
 
 login_window = None
 reg_window = None
-root = None
+main_window = None
 current_username = None
 user_listbox = None
 chat_box = None
@@ -20,69 +21,83 @@ unread_counts = {}  # Словарь для хранения количеств�
 history_loaded = False  # Флаг для отслеживания загрузки истории сообщений
 
 # Цвета и шрифты
-BG_COLOR = "#f0f0f0"
-TEXT_COLOR = "#333333"
-BUTTON_COLOR = "#007bff"
-BUTTON_HOVER_COLOR = "#0056b3"
-ENTRY_BG_COLOR = "#ffffff"
+BG_COLOR = "#1e1e1e"        # Фоновый цвет
+TEXT_COLOR = "#e0e0e0"      # Цвет текста
+BUTTON_COLOR = "#0077ff"    # Цвет кнопок
+BUTTON_HOVER_COLOR = "#0059b3"  # Цвет кнопок при наведении
+ENTRY_BG_COLOR = "#2b2b2b"  # Цвет полей ввода
+HEADING_COLOR = "#c0c0c0"   # Цвет заголовков
 
 def register():
     """Обработчик регистрации нового пользователя."""
-    global reg_window, reg_username_entry, reg_password_entry
-
-    username = reg_username_entry.get()
-    password = reg_password_entry.get()
+    username = reg_username_entry.text()
+    password = reg_password_entry.text()
 
     if not username or not password:
-        messagebox.showerror("Ошибка", "Введите логин и пароль!")
+        QMessageBox.critical(reg_window, "Ошибка", "Введите логин и пароль!")
         return
 
     try:
         response = requests.post(f"{HOST}/register", json={'username': username, 'password': password})
         if response.status_code == 201:
-            messagebox.showinfo("Успех", "Регистрация прошла успешно!")
-            reg_window.destroy()
-            reg_window = None
+            QMessageBox.information(reg_window, "Успех", "Регистрация прошла успешно!")
+            reg_window.accept()
         else:
-            messagebox.showerror("Ошибка", response.json().get('message', 'Неизвестная ошибка'))
+            QMessageBox.critical(reg_window, "Ошибка", response.json().get('message', 'Неизвестная ошибка'))
     except Exception as e:
-        messagebox.showerror("Ошибка", str(e))
+        QMessageBox.critical(reg_window, "Ошибка", str(e))
 
 def open_registration_window():
     """Открывает окно регистрации."""
     global reg_window, reg_username_entry, reg_password_entry
 
-    reg_window = tk.Toplevel(login_window)
-    reg_window.title("Регистрация")
-    reg_window.configure(bg=BG_COLOR)
+    reg_window = QDialog(login_window)
+    reg_window.setWindowTitle("Регистрация")
+    reg_window.setStyleSheet(f"background-color: {BG_COLOR};")
 
-    tk.Label(reg_window, text="Логин", bg=BG_COLOR, fg=TEXT_COLOR, font=("Arial", 12)).pack(pady=5)
-    reg_username_entry = tk.Entry(reg_window, bg=ENTRY_BG_COLOR, font=("Arial", 12))
-    reg_username_entry.pack(padx=10, pady=5)
+    layout = QVBoxLayout()
 
-    tk.Label(reg_window, text="Пароль", bg=BG_COLOR, fg=TEXT_COLOR, font=("Arial", 12)).pack(pady=5)
-    reg_password_entry = tk.Entry(reg_window, show='*', bg=ENTRY_BG_COLOR, font=("Arial", 12))
-    reg_password_entry.pack(padx=10, pady=5)
+    username_label = QLabel("Логин", reg_window)
+    username_label.setStyleSheet(f"color: {HEADING_COLOR}; font-weight: bold;")
+    layout.addWidget(username_label)
 
-    register_button = tk.Button(reg_window, text="Зарегистрироваться", command=register, bg=BUTTON_COLOR, fg="white", font=("Arial", 12))
-    register_button.pack(padx=10, pady=5)
-    register_button.bind("<Enter>", lambda e: register_button.config(bg=BUTTON_HOVER_COLOR))
-    register_button.bind("<Leave>", lambda e: register_button.config(bg=BUTTON_COLOR))
+    reg_username_entry = QLineEdit(reg_window)
+    reg_username_entry.setStyleSheet(f"background-color: {ENTRY_BG_COLOR}; border-radius: 10px; padding: 10px; color: {TEXT_COLOR};")
+    layout.addWidget(reg_username_entry)
 
-    cancel_button = tk.Button(reg_window, text="Отмена", command=reg_window.destroy, bg=BUTTON_COLOR, fg="white", font=("Arial", 12))
-    cancel_button.pack(padx=10, pady=5)
-    cancel_button.bind("<Enter>", lambda e: cancel_button.config(bg=BUTTON_HOVER_COLOR))
-    cancel_button.bind("<Leave>", lambda e: cancel_button.config(bg=BUTTON_COLOR))
+    password_label = QLabel("Пароль", reg_window)
+    password_label.setStyleSheet(f"color: {HEADING_COLOR}; font-weight: bold;")
+    layout.addWidget(password_label)
+
+    reg_password_entry = QLineEdit(reg_window)
+    reg_password_entry.setStyleSheet(f"background-color: {ENTRY_BG_COLOR}; border-radius: 10px; padding: 10px; color: {TEXT_COLOR};")
+    reg_password_entry.setEchoMode(QLineEdit.Password)
+    layout.addWidget(reg_password_entry)
+
+    button_layout = QHBoxLayout()
+    register_button = QPushButton("Зарегистрироваться", reg_window)
+    register_button.setStyleSheet(f"background-color: {BUTTON_COLOR}; color: {TEXT_COLOR}; border-radius: 10px; padding: 10px;")
+    register_button.clicked.connect(register)
+    button_layout.addWidget(register_button)
+
+    cancel_button = QPushButton("Отмена", reg_window)
+    cancel_button.setStyleSheet(f"background-color: {BUTTON_COLOR}; color: {TEXT_COLOR}; border-radius: 10px; padding: 10px;")
+    cancel_button.clicked.connect(reg_window.reject)
+    button_layout.addWidget(cancel_button)
+
+    layout.addLayout(button_layout)
+    reg_window.setLayout(layout)
+    reg_window.exec()
 
 def login():
     """Обработчик входа пользователя."""
     global login_window, username_entry, password_entry, token, current_username
 
-    username = username_entry.get()
-    password = password_entry.get()
+    username = username_entry.text()
+    password = password_entry.text()
 
     if not username or not password:
-        messagebox.showerror("Ошибка", "Введите логин и пароль!")
+        QMessageBox.critical(login_window, "Ошибка", "Введите логин и пароль!")
         return
 
     try:
@@ -90,13 +105,12 @@ def login():
         if response.status_code == 200:
             token = response.json().get('token')
             current_username = username  # Сохраняем текущего пользователя
-            login_window.destroy()
-            login_window = None
+            login_window.close()
             setup_main_window()
         else:
-            messagebox.showerror("Ошибка", response.json().get('message', 'Неизвестная ошибка'))
+            QMessageBox.critical(login_window, "Ошибка", response.json().get('message', 'Неизвестная ошибка'))
     except Exception as e:
-        messagebox.showerror("Ошибка", str(e))
+        QMessageBox.critical(login_window, "Ошибка", str(e))
 
 def connect_socket():
     """Подключение к серверу через WebSocket."""
@@ -116,25 +130,9 @@ def disconnect():
 def all_users(users):
     """Обработчик для получения списка всех пользователей."""
     global all_users
+    print(f"Received all users: {users}")
     all_users = users
-    # Обновляем список пользователей в основном потоке
-    root.after(0, update_user_listbox)
-
-@sio.event
-def unread_counts(counts):
-    """Обработчик для получения количества непрочитанных сообщений от сервера."""
-    global unread_counts
-
-    if isinstance(counts, list):
-        # Преобразуем список кортежей в словарь
-        unread_counts = dict(counts)
-    elif isinstance(counts, dict):
-        # Если данные уже в виде словаря, просто присваиваем их
-        unread_counts = counts
-    else:
-        print(f"Неизвестный формат данных о непрочитанных сообщениях: {counts}")
-
-    root.after(0, update_user_listbox)
+    update_user_listbox()
 
 @sio.event
 def global_message(data):
@@ -142,12 +140,11 @@ def global_message(data):
     if 'text' in data and 'sender' in data:
         text = data['text']
         sender = data['sender']
-        chat_box.config(state=tk.NORMAL)
-        chat_box.insert(tk.END, f"{sender}: {text}\n")
-        chat_box.yview(tk.END)
-        chat_box.config(state=tk.DISABLED)
-    else:
-        print(f"Получено некорректное сообщение: {data}")
+        chat_box.append(f"{sender}: {text}")
+
+        # Обновляем ползунок прокрутки
+        scrollbar = chat_box.verticalScrollBar()
+        scrollbar.setValue(scrollbar.maximum())
 
 @sio.event
 def private_message(data):
@@ -156,24 +153,22 @@ def private_message(data):
     recipient = data.get('to')
     message = data.get('text')
 
-    # Проверяем, если сообщение пришло вам
     if recipient == current_username:
         # Обработка отображения сообщения в приватном чате
         if sender in private_chat_windows:
             private_chat_listbox = private_chat_windows[sender]['listbox']
-            private_chat_listbox.config(state=tk.NORMAL)
-            private_chat_listbox.insert(tk.END, f"{sender}: {message}\n")
-            private_chat_listbox.yview(tk.END)
-            private_chat_listbox.config(state=tk.DISABLED)
+            private_chat_listbox.addItem(f"{sender}: {message}")
+
+            # Обновляем ползунок прокрутки
+            scrollbar = private_chat_listbox.verticalScrollBar()
+            scrollbar.setValue(scrollbar.maximum())
         else:
             # Если чат с этим пользователем не открыт, ничего не делаем
             pass
 
-        # Обновляем количество непрочитанных сообщений для получателя,
-        # если сообщение пришло не от текущего пользователя
         if sender != current_username:
             unread_counts[sender] = unread_counts.get(sender, 0) + 1
-            root.after(0, update_user_listbox)
+            QTimer.singleShot(0, update_user_listbox)
 
 @sio.event
 def chat_history(data):
@@ -184,191 +179,252 @@ def chat_history(data):
     username = data.get('username', '')
 
     if chat_type == 'global':
-        # Обновляем общий чат только при первом запуске
         if not history_loaded:
-            chat_box.config(state=tk.NORMAL)
             for msg in messages:
-                chat_box.insert(tk.END, f"{msg.get('sender', 'Unknown')}: {msg.get('text', '')}\n")
-            chat_box.yview(tk.END)
-            chat_box.config(state=tk.DISABLED)
+                chat_box.append(f"{msg.get('sender', 'Unknown')}: {msg.get('text', '')}")
+            
+            # Обновляем ползунок прокрутки
+            scrollbar = chat_box.verticalScrollBar()
+            scrollbar.setValue(scrollbar.maximum())
+            
             history_loaded = True
     elif chat_type == 'private':
-        # Обновляем приватный чат
         if username in private_chat_windows:
             private_chat_listbox = private_chat_windows[username]['listbox']
-            private_chat_listbox.config(state=tk.NORMAL)
             for msg in messages:
-                private_chat_listbox.insert(tk.END, f"{msg.get('sender', 'Unknown')}: {msg.get('text', '')}\n")
-            private_chat_listbox.yview(tk.END)
-            private_chat_listbox.config(state=tk.DISABLED)
+                private_chat_listbox.addItem(f"{msg.get('sender', 'Unknown')}: {msg.get('text', '')}")
+            
+            # Обновляем ползунок прокрутки
+            scrollbar = private_chat_listbox.verticalScrollBar()
+            scrollbar.setValue(scrollbar.maximum())
     else:
         print(f"Неизвестный тип чата: {chat_type}")
 
-def send_message():
-    """Отправка сообщения в общий чат."""
-    message = message_entry.get()
-    if not message:
-        return
-
-    sio.emit('global_message', {'text': message, 'sender': current_username})
-    message_entry.delete(0, tk.END)
-
 def start_private_chat(username):
-    """Начало приватного чата с выбранным пользователем и загрузка истории."""
-    global private_chat_windows, unread_counts
+    """Открытие окна для личного чата с пользователем."""
+    global private_chat_windows
 
-    # Проверяем, существует ли окно для данного пользователя
     if username in private_chat_windows:
-        chat_window = private_chat_windows[username]['window']
-        if chat_window.winfo_exists():
-            # Окно существует, фокусируемся на нем
-            chat_window.lift()
-            return
-        else:
-            # Окно закрыто, удаляем запись
-            del private_chat_windows[username]
+        private_chat_windows[username]['window'].show()
+    else:
+        private_chat_window = QMainWindow()
+        private_chat_window.setWindowTitle(f"Чат с {username}")
+        private_chat_window.setStyleSheet(f"background-color: {BG_COLOR};")
 
-    # Создаем новое окно чата
-    private_chat_window = tk.Toplevel(root)
-    private_chat_window.title(f"Чат с {username}")
-    private_chat_window.configure(bg=BG_COLOR)
+        layout = QVBoxLayout()
 
-    private_chat_listbox = scrolledtext.ScrolledText(private_chat_window, state=tk.DISABLED, bg=ENTRY_BG_COLOR, font=("Arial", 12))
-    private_chat_listbox.pack(padx=10, pady=10, fill=tk.BOTH, expand=True)
+        private_chat_listbox = QListWidget()
+        private_chat_listbox.setStyleSheet(f"""
+            background-color: {ENTRY_BG_COLOR};
+            border-radius: 10px;
+            padding: 10px;
+            color: {TEXT_COLOR};
+        """)
+        private_chat_listbox.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        private_chat_listbox.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        layout.addWidget(private_chat_listbox)
 
-    private_message_entry = tk.Entry(private_chat_window, bg=ENTRY_BG_COLOR, font=("Arial", 12))
-    private_message_entry.pack(padx=10, pady=5, fill=tk.X, expand=True)
-    private_message_entry.bind('<Return>', lambda event: send_private_message(username))
+        private_message_entry = QTextEdit()
+        private_message_entry.setStyleSheet(f"""
+            background-color: {ENTRY_BG_COLOR};
+            border-radius: 10px;
+            padding: 10px;
+            color: {TEXT_COLOR};
+            border: 2px solid {BUTTON_COLOR}; /* Основная рамка */
+        """)
+        layout.addWidget(private_message_entry)
 
-    send_button = tk.Button(private_chat_window, text="Отправить", command=lambda: send_private_message(username), bg=BUTTON_COLOR, fg="white", font=("Arial", 12))
-    send_button.pack(padx=10, pady=5)
-    send_button.bind("<Enter>", lambda e: send_button.config(bg=BUTTON_HOVER_COLOR))
-    send_button.bind("<Leave>", lambda e: send_button.config(bg=BUTTON_COLOR))
+        send_button = QPushButton("Отправить")
+        send_button.setStyleSheet(f"background-color: {BUTTON_COLOR}; color: {TEXT_COLOR}; border-radius: 10px; padding: 10px;")
+        send_button.clicked.connect(lambda: send_private_message(username))
+        layout.addWidget(send_button)
 
-    # Сохраняем ссылку на новое окно чата
-    private_chat_windows[username] = {
-        'window': private_chat_window,
-        'listbox': private_chat_listbox,
-        'entry': private_message_entry
-    }
+        chat_container = QWidget()
+        chat_container.setLayout(layout)
+        
+        private_chat_window.setCentralWidget(chat_container)
+        private_chat_window.show()
 
-    # Запрашиваем историю сообщений для этого пользователя
-    sio.emit('request_chat_history', {'type': 'private', 'username': username})
+        private_chat_windows[username] = {
+            'window': private_chat_window,
+            'listbox': private_chat_listbox,
+            'entry': private_message_entry
+        }
 
-    # Убираем значок уведомления и сбрасываем количество непрочитанных сообщений
-    if username in unread_counts:
-        unread_counts[username] = 0
-        root.after(0, update_user_listbox)
+        sio.emit('request_chat_history', {'type': 'private', 'username': username})
+
+        if username in unread_counts:
+            unread_counts[username] = 0
+            update_user_listbox()
 
 def send_private_message(username):
     """Отправка личного сообщения."""
     if username not in private_chat_windows:
-        messagebox.showwarning("Ошибка", f"Чат с {username} не открыт.")
+        QMessageBox.warning(main_window, "Ошибка", f"Чат с {username} не открыт.")
         return
 
-    message = private_chat_windows[username]['entry'].get()
+    message = private_chat_windows[username]['entry'].toPlainText()
     if not message:
         return
 
     sio.emit('private_message', {'to': username, 'text': message, 'from': current_username})
 
     private_chat_listbox = private_chat_windows[username]['listbox']
-    private_chat_listbox.config(state=tk.NORMAL)
-    private_chat_listbox.insert(tk.END, f"{current_username}: {message}\n")
-    private_chat_listbox.yview(tk.END)
-    private_chat_listbox.config(state=tk.DISABLED)
+    private_chat_listbox.addItem(f"{current_username}: {message}")
 
-    private_chat_windows[username]['entry'].delete(0, tk.END)
+    # Обновляем ползунок прокрутки
+    scrollbar = private_chat_listbox.verticalScrollBar()
+    scrollbar.setValue(scrollbar.maximum())
 
-    # Сбрасываем счетчик непрочитанных сообщений у получателя, если чат открыт
+    private_chat_windows[username]['entry'].clear()
+
     if username in unread_counts:
         unread_counts[username] = unread_counts.get(username, 0)
-        root.after(0, update_user_listbox)
+        update_user_listbox()
+
+def send_message():
+    """Отправка сообщения в общий чат."""
+    global message_entry
+
+    message = message_entry.toPlainText()
+    if not message:
+        return
+
+    sio.emit('global_message', {'text': message, 'sender': current_username})
+
+    chat_box.append(f"{current_username}: {message}")
+
+    # Обновляем ползунок прокрутки
+    scrollbar = chat_box.verticalScrollBar()
+    scrollbar.setValue(scrollbar.maximum())
+
+    message_entry.clear()
 
 def update_user_listbox():
-    """Обновление списка пользователей с учётом количества непрочитанных сообщений."""
-    global user_listbox, all_users, unread_counts
+    """Обновление списка пользователей с учетом непрочитанных сообщений."""
+    global user_listbox, all_users, unread_counts, private_chat_windows
 
-    user_listbox.delete(0, tk.END)
+    user_listbox.clear()
     for user in all_users:
         display_name = user
-        # Отображаем знак "!" если есть непрочитанные сообщения и чат с пользователем не открыт
         if user in unread_counts and unread_counts[user] > 0 and user not in private_chat_windows:
             display_name += " !"
-        user_listbox.insert(tk.END, display_name)
+        user_listbox.addItem(display_name)
 
 def setup_main_window():
     """Настройка основного окна приложения."""
-    global root, chat_box, message_entry, user_listbox
+    global main_window, chat_box, message_entry, user_listbox
 
-    root = tk.Tk()
-    root.title("Чат")
-    root.configure(bg=BG_COLOR)
+    main_window = QMainWindow()
+    main_window.setWindowTitle("Чат")
+    main_window.setStyleSheet(f"background-color: {BG_COLOR};")
 
-    # Настройка строк и столбцов для динамического изменения размеров
-    root.grid_rowconfigure(0, weight=1)
-    root.grid_rowconfigure(1, weight=0)
-    root.grid_columnconfigure(0, weight=1)
+    central_widget = QWidget()
+    main_window.setCentralWidget(central_widget)
+    layout = QHBoxLayout(central_widget)  # Изменен макет на горизонтальный
 
-    # Фрейм для списка пользователей
-    user_frame = tk.Frame(root, bg=BG_COLOR)
-    user_frame.grid(row=0, column=0, rowspan=2, sticky="nsw", padx=10, pady=10)
+    user_frame = QWidget()
+    user_layout = QVBoxLayout(user_frame)
+    user_label = QLabel("Пользователи", main_window)
+    user_label.setStyleSheet(f"color: {HEADING_COLOR}; font-weight: bold;")
+    user_layout.addWidget(user_label)
+    user_listbox = QListWidget()
+    user_listbox.setStyleSheet(f"background-color: {ENTRY_BG_COLOR}; border-radius: 10px; padding: 10px; color: {TEXT_COLOR};")
+    user_listbox.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+    user_listbox.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+    user_layout.addWidget(user_listbox)
+    user_frame.setFixedWidth(200)  # Устанавливаем фиксированную ширину для списка пользователей
+    layout.addWidget(user_frame)
 
-    tk.Label(user_frame, text="Пользователи", bg=BG_COLOR, fg=TEXT_COLOR, font=("Arial", 12)).pack(pady=5)
-    user_listbox = tk.Listbox(user_frame, bg=ENTRY_BG_COLOR, font=("Arial", 12))
-    user_listbox.pack(padx=10, pady=5, fill=tk.BOTH, expand=True)
-    user_listbox.bind('<Double-1>', lambda event: start_private_chat(user_listbox.get(user_listbox.curselection()).split(' ')[0]))
+    chat_frame = QWidget()
+    chat_layout = QVBoxLayout(chat_frame)
 
-    # Фрейм для чата
-    chat_frame = tk.Frame(root, bg=BG_COLOR)
-    chat_frame.grid(row=0, column=1, sticky="nsew", padx=10, pady=10)
+    # Добавляем QTextEdit с ползунком
+    chat_box = QTextEdit()
+    chat_box.setReadOnly(True)
+    chat_box.setStyleSheet(f"""
+        background-color: {ENTRY_BG_COLOR};
+        border-radius: 10px;
+        padding: 10px;
+        color: {TEXT_COLOR};
+        border: 2px solid {BUTTON_COLOR};
+    """)
+    chat_box.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+    chat_box.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+    chat_layout.addWidget(chat_box)
 
-    chat_box = scrolledtext.ScrolledText(chat_frame, state=tk.DISABLED, bg=ENTRY_BG_COLOR, font=("Arial", 12))
-    chat_box.pack(padx=10, pady=5, fill=tk.BOTH, expand=True)
+    input_frame = QWidget()
+    input_layout = QHBoxLayout(input_frame)
+    
+    # Основной стиль для поля ввода сообщений
+    message_entry = QTextEdit()
+    message_entry.setStyleSheet(f"""
+        background-color: {ENTRY_BG_COLOR};
+        border-radius: 10px;
+        padding: 10px;
+        color: {TEXT_COLOR};
+        border: 2px solid {BUTTON_COLOR}; /* Основная рамка */
+        border-top: 3px solid {BUTTON_HOVER_COLOR}; /* Дополнительная рамка сверху для выделения */
+    """)
+    input_layout.addWidget(message_entry)
+    
+    send_button = QPushButton("Отправить")
+    send_button.setStyleSheet(f"background-color: {BUTTON_COLOR}; color: {TEXT_COLOR}; border-radius: 10px; padding: 10px;")
+    send_button.clicked.connect(send_message)
+    input_layout.addWidget(send_button)
+    
+    chat_layout.addWidget(input_frame)  # Перемещаем ввод сообщений в chat_layout
+    layout.addWidget(chat_frame)  # Добавляем chat_frame в основной layout
 
-    # Фрейм для ввода сообщений и кнопки отправки
-    input_frame = tk.Frame(root, bg=BG_COLOR)
-    input_frame.grid(row=1, column=1, sticky="ew", padx=10, pady=10)
-
-    message_entry = tk.Text(input_frame, height=3, bg=ENTRY_BG_COLOR, font=("Arial", 12))
-    message_entry.pack(side=tk.LEFT, padx=10, pady=5, fill=tk.BOTH, expand=True)
-    message_entry.bind('<Return>', lambda event: send_message())
-
-    send_button = tk.Button(input_frame, text="Отправить", command=send_message, bg=BUTTON_COLOR, fg="white", font=("Arial", 12))
-    send_button.pack(side=tk.RIGHT, padx=10, pady=5)
-    send_button.bind("<Enter>", lambda e: send_button.config(bg=BUTTON_HOVER_COLOR))
-    send_button.bind("<Leave>", lambda e: send_button.config(bg=BUTTON_COLOR))
+    user_listbox.itemDoubleClicked.connect(lambda item: start_private_chat(item.text().split(' ')[0]))
 
     connect_socket()
 
-    # Запрашиваем историю сообщений общего чата только один раз
-    global history_loaded
     if not history_loaded:
         sio.emit('request_chat_history', {'type': 'global'})
 
-    root.mainloop()
+    main_window.show()
 
 if __name__ == "__main__":
-    login_window = tk.Tk()
-    login_window.title("Вход")
-    login_window.configure(bg=BG_COLOR)
+    app = QApplication([])
 
-    tk.Label(login_window, text="Логин", bg=BG_COLOR, fg=TEXT_COLOR, font=("Arial", 12)).pack(pady=5)
-    username_entry = tk.Entry(login_window, bg=ENTRY_BG_COLOR, font=("Arial", 12))
-    username_entry.pack(padx=10, pady=5)
+    login_window = QMainWindow()
+    login_window.setWindowTitle("Вход")
+    login_window.setStyleSheet(f"background-color: {BG_COLOR};")
 
-    tk.Label(login_window, text="Пароль", bg=BG_COLOR, fg=TEXT_COLOR, font=("Arial", 12)).pack(pady=5)
-    password_entry = tk.Entry(login_window, show='*', bg=ENTRY_BG_COLOR, font=("Arial", 12))
-    password_entry.pack(padx=10, pady=5)
+    central_widget = QWidget()
+    login_window.setCentralWidget(central_widget)
+    layout = QVBoxLayout(central_widget)
 
-    login_button = tk.Button(login_window, text="Войти", command=login, bg=BUTTON_COLOR, fg="white", font=("Arial", 12))
-    login_button.pack(padx=10, pady=5)
-    login_button.bind("<Enter>", lambda e: login_button.config(bg=BUTTON_HOVER_COLOR))
-    login_button.bind("<Leave>", lambda e: login_button.config(bg=BUTTON_COLOR))
+    login_label = QLabel("Логин", login_window)
+    login_label.setStyleSheet(f"color: {HEADING_COLOR}; font-weight: bold;")
+    layout.addWidget(login_label)
 
-    reg_button = tk.Button(login_window, text="Регистрация", command=open_registration_window, bg=BUTTON_COLOR, fg="white", font=("Arial", 12))
-    reg_button.pack(padx=10, pady=5)
-    reg_button.bind("<Enter>", lambda e: reg_button.config(bg=BUTTON_HOVER_COLOR))
-    reg_button.bind("<Leave>", lambda e: reg_button.config(bg=BUTTON_COLOR))
+    username_entry = QLineEdit(login_window)
+    username_entry.setStyleSheet(f"background-color: {ENTRY_BG_COLOR}; border-radius: 10px; padding: 10px; color: {TEXT_COLOR};")
+    layout.addWidget(username_entry)
 
-    login_window.mainloop()
+    password_label = QLabel("Пароль", login_window)
+    password_label.setStyleSheet(f"color: {HEADING_COLOR}; font-weight: bold;")
+    layout.addWidget(password_label)
+
+    password_entry = QLineEdit(login_window)
+    password_entry.setStyleSheet(f"background-color: {ENTRY_BG_COLOR}; border-radius: 10px; padding: 10px; color: {TEXT_COLOR};")
+    password_entry.setEchoMode(QLineEdit.Password)
+    layout.addWidget(password_entry)
+
+    button_layout = QHBoxLayout()
+    login_button = QPushButton("Войти", login_window)
+    login_button.setStyleSheet(f"background-color: {BUTTON_COLOR}; color: {TEXT_COLOR}; border-radius: 10px; padding: 10px;")
+    login_button.clicked.connect(login)
+    button_layout.addWidget(login_button)
+
+    register_button = QPushButton("Регистрация", login_window)
+    register_button.setStyleSheet(f"background-color: {BUTTON_COLOR}; color: {TEXT_COLOR}; border-radius: 10px; padding: 10px;")
+    register_button.clicked.connect(open_registration_window)
+    button_layout.addWidget(register_button)
+
+    layout.addLayout(button_layout)
+    login_window.show()
+
+    app.exec()

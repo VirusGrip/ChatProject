@@ -148,7 +148,8 @@ def handle_connect():
                 GROUP BY users.username
             """, (session['user_id'],))
             unread_counts = cur.fetchall()
-            emit('unread_counts', unread_counts, room=request.sid)
+            unread_counts_dict = {username: count for username, count in unread_counts}
+            emit('unread_counts', unread_counts_dict, room=request.sid)
 
             # Отправляем непрочитанные сообщения
             cur.execute("SELECT message, users.username FROM private_messages JOIN users ON users.id = private_messages.user_id WHERE recipient_id = ? AND is_read = 0", 
@@ -318,4 +319,4 @@ def handle_disconnect():
 
 if __name__ == '__main__':
     init_db()
-    socketio.run(app, host='10.1.3.187', port=12345)
+    socketio.run(app, host='192.168.1.127', port=12345)
