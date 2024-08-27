@@ -423,7 +423,7 @@ if __name__ == "__main__":
     register_button.setStyleSheet(f"background-color: {BUTTON_COLOR}; color: {TEXT_COLOR}; border-radius: 10px; padding: 10px;")
     register_button.clicked.connect(open_registration_window)
     button_layout.addWidget(register_button)
-
+ 
     layout.addLayout(button_layout)
     login_window.show()
 
