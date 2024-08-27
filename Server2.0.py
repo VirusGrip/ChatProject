@@ -316,7 +316,8 @@ def handle_disconnect():
         for room in list(socketio.server.manager.rooms.keys()):
             if room.startswith(f"room_{username}_") or room.endswith(f"_{username}"):
                 leave_room(room)
+
  
 if __name__ == '__main__':
     init_db()
-    socketio.run(app, host='10.1.3.187', port=12345)
+    socketio.run(app, host='192.168.1.127', port=12345)
