@@ -1,6 +1,7 @@
+import os
 import socketio
 import requests
-from PySide6.QtWidgets import QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel, QLineEdit, QTextEdit, QListWidget, QMessageBox, QDialog, QListWidgetItem
+from PySide6.QtWidgets import QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel, QLineEdit, QTextEdit, QListWidget, QMessageBox, QDialog, QListWidgetItem, QFileDialog
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QTextCursor, QColor, QFont, QBrush
 
@@ -235,10 +236,18 @@ def start_private_chat(username):
         """)
         layout.addWidget(private_message_entry)
 
+        button_layout = QHBoxLayout()
         send_button = QPushButton("Отправить")
         send_button.setStyleSheet(f"background-color: {BUTTON_COLOR}; color: {TEXT_COLOR}; border-radius: 10px; padding: 10px;")
         send_button.clicked.connect(lambda: send_private_message(username))
-        layout.addWidget(send_button)
+        button_layout.addWidget(send_button)
+
+        attach_button = QPushButton("Прикрепить файл")
+        attach_button.setStyleSheet(f"background-color: {BUTTON_COLOR}; color: {TEXT_COLOR}; border-radius: 10px; padding: 10px;")
+        attach_button.clicked.connect(lambda: attach_file(username))
+        button_layout.addWidget(attach_button)
+
+        layout.addLayout(button_layout)
 
         chat_container = QWidget()
         chat_container.setLayout(layout)
@@ -282,6 +291,29 @@ def send_private_message(username):
     if username in unread_counts:
         unread_counts[username] = unread_counts.get(username, 0)
         update_user_listbox()
+
+def attach_file(username):
+    """Выбор и отправка файла в личном чате."""
+    if username not in private_chat_windows:
+        QMessageBox.warning(main_window, "Ошибка", f"Чат с {username} не открыт.")
+        return
+
+    file_path, _ = QFileDialog.getOpenFileName(main_window, "Выберите файл для отправки")
+    if file_path:
+        with open(file_path, 'rb') as file:
+            file_data = file.read()
+            sio.emit('private_message', {
+                'to': username,
+                'from': current_username,
+                'text': f"Файл: {os.path.basename(file_path)}",
+                'file': file_data
+            })
+            private_chat_listbox = private_chat_windows[username]['listbox']
+            private_chat_listbox.addItem(f"{current_username}: Файл: {os.path.basename(file_path)}")
+
+            # Обновляем ползунок прокрутки
+            scrollbar = private_chat_listbox.verticalScrollBar()
+            scrollbar.setValue(scrollbar.maximum())
 
 def send_message():
     """Отправка сообщения в общий чат."""
@@ -417,12 +449,12 @@ if __name__ == "__main__":
     layout.addWidget(password_entry)
 
     button_layout = QHBoxLayout()
-    login_button = QPushButton("Войти", login_window)
+    login_button = QPushButton("Войти")
     login_button.setStyleSheet(f"background-color: {BUTTON_COLOR}; color: {TEXT_COLOR}; border-radius: 10px; padding: 10px;")
     login_button.clicked.connect(login)
     button_layout.addWidget(login_button)
 
-    register_button = QPushButton("Регистрация", login_window)
+    register_button = QPushButton("Регистрация")
     register_button.setStyleSheet(f"background-color: {BUTTON_COLOR}; color: {TEXT_COLOR}; border-radius: 10px; padding: 10px;")
     register_button.clicked.connect(open_registration_window)
     button_layout.addWidget(register_button)

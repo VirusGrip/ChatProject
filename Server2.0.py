@@ -4,6 +4,7 @@ from werkzeug.security import generate_password_hash, check_password_hash
 import sqlite3
 import os
 import jwt
+import base64
 
 app = Flask(__name__)
 app.secret_key = '12345678'
@@ -40,6 +41,17 @@ def init_db():
                 message TEXT NOT NULL,
                 timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
                 is_read INTEGER DEFAULT 0,
+                FOREIGN KEY (user_id) REFERENCES users(id),
+                FOREIGN KEY (recipient_id) REFERENCES users(id)
+            )
+        ''')
+        cursor.execute('''
+            CREATE TABLE files (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER,
+                recipient_id INTEGER,
+                file_path TEXT NOT NULL,
+                timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY (user_id) REFERENCES users(id),
                 FOREIGN KEY (recipient_id) REFERENCES users(id)
             )
@@ -173,6 +185,49 @@ def handle_connect():
         send("Ошибка: Вы не авторизованы", to=request.sid)
         return
 
+@socketio.on('upload_file')
+def handle_upload_file(data):
+    username = session.get('username')
+    file_data = data.get('file')
+    recipient = data.get('to')
+
+    if not username or not file_data or not recipient:
+        emit('error', {'message': 'Ошибка: Вы не авторизованы или не указаны данные файла'})
+        return
+
+    # Decode the file
+    file_content = base64.b64decode(file_data['content'])
+    file_name = file_data['name']
+    file_path = f"uploads/{file_name}"
+    
+    # Save the file
+    if not os.path.exists('uploads'):
+        os.makedirs('uploads')
+    
+    with open(file_path, 'wb') as file:
+        file.write(file_content)
+    
+    user_id = session.get('user_id')
+    conn, cur = get_db()
+    cur.execute("SELECT id FROM users WHERE username = ?", (recipient,))
+    recipient_data = cur.fetchone()
+
+    if recipient_data:
+        recipient_id = recipient_data[0]
+        cur.execute("INSERT INTO files (user_id, recipient_id, file_path) VALUES (?, ?, ?)", 
+                    (user_id, recipient_id, file_path))
+        conn.commit()
+        conn.close()
+
+        # Notify recipient
+        recipient_sid = next((sid for sid, name in active_users.items() if name == recipient), None)
+        if recipient_sid:
+            emit('file_received', {'from': username, 'file_path': file_path}, room=recipient_sid)
+    else:
+        emit('error', {'message': 'Ошибка: Получатель не найден в базе данных'})
+
+    conn.close()
+    
 @socketio.on('global_message')
 def handle_global_message(data):
     username = session.get('username')
