@@ -1,8 +1,8 @@
 import socketio
 import requests
-from PySide6.QtWidgets import QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel, QLineEdit, QTextEdit, QListWidget, QMessageBox, QDialog
+from PySide6.QtWidgets import QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel, QLineEdit, QTextEdit, QListWidget, QMessageBox, QDialog, QListWidgetItem
 from PySide6.QtCore import Qt, QTimer
-from PySide6.QtGui import QTextCursor
+from PySide6.QtGui import QTextCursor, QColor, QFont, QBrush
 
 HOST = 'http://192.168.1.127:12345'
 sio = socketio.Client()
@@ -27,6 +27,7 @@ BUTTON_COLOR = "#0077ff"    # Цвет кнопок
 BUTTON_HOVER_COLOR = "#0059b3"  # Цвет кнопок при наведении
 ENTRY_BG_COLOR = "#2b2b2b"  # Цвет полей ввода
 HEADING_COLOR = "#c0c0c0"   # Цвет заголовков
+USER_COLOR = "#0077ff"      # Цвет пользователей
 
 def register():
     """Обработчик регистрации нового пользователя."""
@@ -308,8 +309,10 @@ def update_user_listbox():
     for user in all_users:
         display_name = user
         if user in unread_counts and unread_counts[user] > 0 and user not in private_chat_windows:
-            display_name += " !"
-        user_listbox.addItem(display_name)
+            display_name += " <b style='color: red;'>!</b>"
+        item = QListWidgetItem(display_name)
+        item.setForeground(QBrush(QColor(USER_COLOR)))  # Устанавливаем цвет текста
+        user_listbox.addItem(item)
 
 def setup_main_window():
     """Настройка основного окна приложения."""
@@ -424,7 +427,6 @@ if __name__ == "__main__":
     register_button.clicked.connect(open_registration_window)
     button_layout.addWidget(register_button)
 
- 
     layout.addLayout(button_layout)
     login_window.show()
 
