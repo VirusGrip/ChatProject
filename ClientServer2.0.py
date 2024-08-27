@@ -1,10 +1,13 @@
 import socketio
 import requests
-from PySide6.QtWidgets import QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel, QLineEdit, QTextEdit, QListWidget, QMessageBox, QDialog
+from PySide6.QtWidgets import QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel, QLineEdit, QTextEdit, QListWidget, QMessageBox, QDialog, QListWidgetItem
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QTextCursor
+from PySide6.QtGui import QColor
 
-HOST = 'http://192.168.1.127:12345'
+
+
+HOST = 'http://10.1.3.187:12345'
 sio = socketio.Client()
 token = None
 
@@ -257,31 +260,29 @@ def start_private_chat(username):
             unread_counts[username] = 0
             update_user_listbox()
 
-def send_private_message(username):
-    """Отправка личного сообщения."""
-    if username not in private_chat_windows:
-        QMessageBox.warning(main_window, "Ошибка", f"Чат с {username} не открыт.")
-        return
+def send_private_message(data):
+    """Обработчик для получения личных сообщений."""
+    sender = data.get('from')
+    recipient = data.get('to')
+    message = data.get('text')
 
-    message = private_chat_windows[username]['entry'].toPlainText()
-    if not message:
-        return
+    if recipient == current_username:
+        # Обработка отображения сообщения в приватном чате
+        if sender in private_chat_windows:
+            private_chat_listbox = private_chat_windows[sender]['listbox']
+            private_chat_listbox.addItem(f"{sender}: {message}")
 
-    sio.emit('private_message', {'to': username, 'text': message, 'from': current_username})
+            # Обновляем ползунок прокрутки
+            scrollbar = private_chat_listbox.verticalScrollBar()
+            scrollbar.setValue(scrollbar.maximum())
+        else:
+            # Если чат с этим пользователем не открыт, увеличиваем счетчик непрочитанных сообщений
+            unread_counts[sender] = unread_counts.get(sender, 0) + 1
+            QTimer.singleShot(0, update_user_listbox)
 
-    private_chat_listbox = private_chat_windows[username]['listbox']
-    private_chat_listbox.addItem(f"{current_username}: {message}")
-
-    # Обновляем ползунок прокрутки
-    scrollbar = private_chat_listbox.verticalScrollBar()
-    scrollbar.setValue(scrollbar.maximum())
-
-    private_chat_windows[username]['entry'].clear()
-
-    if username in unread_counts:
-        unread_counts[username] = unread_counts.get(username, 0)
-        update_user_listbox()
-
+    if sender != current_username:
+        # Обновляем отображение списка пользователей
+        QTimer.singleShot(0, update_user_listbox)
 def send_message():
     """Отправка сообщения в общий чат."""
     global message_entry
@@ -292,7 +293,8 @@ def send_message():
 
     sio.emit('global_message', {'text': message, 'sender': current_username})
 
-    chat_box.append(f"{current_username}: {message}")
+    # Удалите эту строку, чтобы не дублировать сообщение
+    # chat_box.append(f"{current_username}: {message}")
 
     # Обновляем ползунок прокрутки
     scrollbar = chat_box.verticalScrollBar()
@@ -300,8 +302,9 @@ def send_message():
 
     message_entry.clear()
 
+from PySide6.QtGui import QColor  # Импортируем QColor
+
 def update_user_listbox():
-    """Обновление списка пользователей с учетом непрочитанных сообщений."""
     global user_listbox, all_users, unread_counts, private_chat_windows
 
     user_listbox.clear()
@@ -309,7 +312,30 @@ def update_user_listbox():
         display_name = user
         if user in unread_counts and unread_counts[user] > 0 and user not in private_chat_windows:
             display_name += " !"
-        user_listbox.addItem(display_name)
+        
+        item = QListWidgetItem(display_name)
+        
+        # Устанавливаем светло-синий цвет текста и жирный шрифт
+        item.setForeground(QColor("#add8e6"))  # Светло-синий цвет
+        font = item.font()
+        font.setBold(True)
+        item.setFont(font)
+        
+        # Стиль с белой рамкой
+        user_listbox.setStyleSheet("""
+            QListWidget::item {
+                border: 1px solid white;
+                padding: 5px;
+                margin: 2px;
+                border-radius: 5px;
+            }
+            QListWidget::item:selected {
+                background-color: #0059b3;
+            }
+        """)
+        
+        user_listbox.addItem(item)
+
 
 def setup_main_window():
     """Настройка основного окна приложения."""

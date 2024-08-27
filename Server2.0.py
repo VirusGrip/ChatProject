@@ -319,4 +319,4 @@ def handle_disconnect():
  
 if __name__ == '__main__':
     init_db()
-    socketio.run(app, host='192.168.1.127', port=12345)
+    socketio.run(app, host='10.1.3.187', port=12345)
