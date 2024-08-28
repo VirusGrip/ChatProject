@@ -1,10 +1,10 @@
+import base64
 import os
 import socketio
 import requests
 from PySide6.QtWidgets import QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel, QLineEdit, QTextEdit, QListWidget, QMessageBox, QDialog, QListWidgetItem, QFileDialog
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QTextCursor, QColor, QFont, QBrush
-import base64
 
 HOST = 'http://10.1.3.187:12345'
 sio = socketio.Client()
