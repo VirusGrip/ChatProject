@@ -1,4 +1,4 @@
-from flask import Flask, request, jsonify, session, send_file
+from flask import Flask, request, jsonify, session
 from flask_socketio import SocketIO, send, emit, join_room, leave_room
 from werkzeug.security import generate_password_hash, check_password_hash
 import sqlite3
@@ -123,14 +123,6 @@ def login():
     else:
         return jsonify({'message': 'Неправильный логин или пароль'}), 400
 
-@app.route('/download/<filename>', methods=['GET'])
-def download_file(filename):
-    file_path = f"uploads/{filename}"
-    if os.path.exists(file_path):
-        return send_file(file_path, as_attachment=True)
-    else:
-        return jsonify({'message': 'Файл не найден'}), 404
-    
 @app.route('/all_users', methods=['GET'])
 def get_all_users():
     conn, cur = get_db()

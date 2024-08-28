@@ -1,4 +1,3 @@
-import base64
 import os
 import socketio
 import requests
@@ -301,60 +300,20 @@ def attach_file(username):
 
     file_path, _ = QFileDialog.getOpenFileName(main_window, "Выберите файл для отправки")
     if file_path:
-        try:
-            with open(file_path, 'rb') as file:
-                file_data = file.read()
-                encoded_file = base64.b64encode(file_data).decode('utf-8')  # Кодируем файл в Base64
-
-                print(f"Отправка файла {os.path.basename(file_path)} размером {len(file_data)} байт")  # Лог
-                
-                sio.emit('upload_file', {  # Изменить на правильное событие
-                    'to': username,
-                    'from': current_username,
-                    'file': {
-                        'name': os.path.basename(file_path),
-                        'content': encoded_file
-                    }
-                })
-
-                private_chat_listbox = private_chat_windows[username]['listbox']
-                private_chat_listbox.addItem(f"{current_username}: Файл: {os.path.basename(file_path)}")
-
-                # Обновляем ползунок прокрутки
-                scrollbar = private_chat_listbox.verticalScrollBar()
-                scrollbar.setValue(scrollbar.maximum())
-
-        except Exception as e:
-            QMessageBox.critical(main_window, "Ошибка", f"Не удалось отправить файл: {str(e)}")
-@sio.event
-def file_message(data):
-    """Обработчик для получения файлов."""
-    sender = data.get('from')
-    recipient = data.get('to')
-    file_info = data.get('file', {})
-    file_name = file_info.get('name')
-    file_content = file_info.get('content')
-
-    if recipient == current_username:
-        if file_name and file_content:
-            # Декодирование файла
-            file_data = base64.b64decode(file_content)
-            
-            # Создание временного файла для скачивания
-            temp_file_path = os.path.join(os.getenv('TEMP', '.'), file_name)
-            with open(temp_file_path, 'wb') as file:
-                file.write(file_data)
-
-            # Добавление ссылки на файл в чат
-            file_link = f'<a href="file:///{temp_file_path}">Скачать {file_name}</a>'
-            chat_box.append(f"{sender}: {file_link}")
+        with open(file_path, 'rb') as file:
+            file_data = file.read()
+            sio.emit('private_message', {
+                'to': username,
+                'from': current_username,
+                'text': f"Файл: {os.path.basename(file_path)}",
+                'file': file_data
+            })
+            private_chat_listbox = private_chat_windows[username]['listbox']
+            private_chat_listbox.addItem(f"{current_username}: Файл: {os.path.basename(file_path)}")
 
             # Обновляем ползунок прокрутки
-            scrollbar = chat_box.verticalScrollBar()
+            scrollbar = private_chat_listbox.verticalScrollBar()
             scrollbar.setValue(scrollbar.maximum())
-        else:
-            QMessageBox.warning(main_window, "Ошибка", "Ошибка получения файла.")
-
 
 def send_message():
     """Отправка сообщения в общий чат."""
