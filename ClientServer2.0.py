@@ -326,6 +326,35 @@ def attach_file(username):
 
         except Exception as e:
             QMessageBox.critical(main_window, "Ошибка", f"Не удалось отправить файл: {str(e)}")
+@sio.event
+def file_message(data):
+    """Обработчик для получения файлов."""
+    sender = data.get('from')
+    recipient = data.get('to')
+    file_info = data.get('file', {})
+    file_name = file_info.get('name')
+    file_content = file_info.get('content')
+
+    if recipient == current_username:
+        if file_name and file_content:
+            # Декодирование файла
+            file_data = base64.b64decode(file_content)
+            
+            # Создание временного файла для скачивания
+            temp_file_path = os.path.join(os.getenv('TEMP', '.'), file_name)
+            with open(temp_file_path, 'wb') as file:
+                file.write(file_data)
+
+            # Добавление ссылки на файл в чат
+            file_link = f'<a href="file:///{temp_file_path}">Скачать {file_name}</a>'
+            chat_box.append(f"{sender}: {file_link}")
+
+            # Обновляем ползунок прокрутки
+            scrollbar = chat_box.verticalScrollBar()
+            scrollbar.setValue(scrollbar.maximum())
+        else:
+            QMessageBox.warning(main_window, "Ошибка", "Ошибка получения файла.")
+
 
 def send_message():
     """Отправка сообщения в общий чат."""
