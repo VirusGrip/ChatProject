@@ -1,11 +1,10 @@
+import os
 import socketio
 import requests
-from PySide6.QtWidgets import QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel, QLineEdit, QTextEdit, QListWidget, QMessageBox, QDialog, QListWidgetItem
+from PySide6.QtWidgets import QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel, QLineEdit, QTextEdit, QListWidget, QMessageBox, QDialog, QListWidgetItem, QFileDialog
 from PySide6.QtCore import Qt, QTimer
-from PySide6.QtGui import QTextCursor
-from PySide6.QtGui import QColor
-
-
+from PySide6.QtGui import QTextCursor, QColor, QFont, QBrush
+import base64
 
 HOST = 'http://10.1.3.187:12345'
 sio = socketio.Client()
@@ -30,6 +29,7 @@ BUTTON_COLOR = "#0077ff"    # Цвет кнопок
 BUTTON_HOVER_COLOR = "#0059b3"  # Цвет кнопок при наведении
 ENTRY_BG_COLOR = "#2b2b2b"  # Цвет полей ввода
 HEADING_COLOR = "#c0c0c0"   # Цвет заголовков
+USER_COLOR = "#0077ff"      # Цвет пользователей
 
 def register():
     """Обработчик регистрации нового пользователя."""
@@ -237,10 +237,18 @@ def start_private_chat(username):
         """)
         layout.addWidget(private_message_entry)
 
+        button_layout = QHBoxLayout()
         send_button = QPushButton("Отправить")
         send_button.setStyleSheet(f"background-color: {BUTTON_COLOR}; color: {TEXT_COLOR}; border-radius: 10px; padding: 10px;")
         send_button.clicked.connect(lambda: send_private_message(username))
-        layout.addWidget(send_button)
+        button_layout.addWidget(send_button)
+
+        attach_button = QPushButton("Прикрепить файл")
+        attach_button.setStyleSheet(f"background-color: {BUTTON_COLOR}; color: {TEXT_COLOR}; border-radius: 10px; padding: 10px;")
+        attach_button.clicked.connect(lambda: attach_file(username))
+        button_layout.addWidget(attach_button)
+
+        layout.addLayout(button_layout)
 
         chat_container = QWidget()
         chat_container.setLayout(layout)
@@ -260,29 +268,65 @@ def start_private_chat(username):
             unread_counts[username] = 0
             update_user_listbox()
 
-def send_private_message(data):
-    """Обработчик для получения личных сообщений."""
-    sender = data.get('from')
-    recipient = data.get('to')
-    message = data.get('text')
+def send_private_message(username):
+    """Отправка личного сообщения."""
+    if username not in private_chat_windows:
+        QMessageBox.warning(main_window, "Ошибка", f"Чат с {username} не открыт.")
+        return
 
-    if recipient == current_username:
-        # Обработка отображения сообщения в приватном чате
-        if sender in private_chat_windows:
-            private_chat_listbox = private_chat_windows[sender]['listbox']
-            private_chat_listbox.addItem(f"{sender}: {message}")
+    message = private_chat_windows[username]['entry'].toPlainText()
+    if not message:
+        return
 
-            # Обновляем ползунок прокрутки
-            scrollbar = private_chat_listbox.verticalScrollBar()
-            scrollbar.setValue(scrollbar.maximum())
-        else:
-            # Если чат с этим пользователем не открыт, увеличиваем счетчик непрочитанных сообщений
-            unread_counts[sender] = unread_counts.get(sender, 0) + 1
-            QTimer.singleShot(0, update_user_listbox)
+    sio.emit('private_message', {'to': username, 'text': message, 'from': current_username})
 
-    if sender != current_username:
-        # Обновляем отображение списка пользователей
-        QTimer.singleShot(0, update_user_listbox)
+    private_chat_listbox = private_chat_windows[username]['listbox']
+    private_chat_listbox.addItem(f"{current_username}: {message}")
+
+    # Обновляем ползунок прокрутки
+    scrollbar = private_chat_listbox.verticalScrollBar()
+    scrollbar.setValue(scrollbar.maximum())
+
+    private_chat_windows[username]['entry'].clear()
+
+    if username in unread_counts:
+        unread_counts[username] = unread_counts.get(username, 0)
+        update_user_listbox()
+
+def attach_file(username):
+    """Выбор и отправка файла в личном чате."""
+    if username not in private_chat_windows:
+        QMessageBox.warning(main_window, "Ошибка", f"Чат с {username} не открыт.")
+        return
+
+    file_path, _ = QFileDialog.getOpenFileName(main_window, "Выберите файл для отправки")
+    if file_path:
+        try:
+            with open(file_path, 'rb') as file:
+                file_data = file.read()
+                encoded_file = base64.b64encode(file_data).decode('utf-8')  # Кодируем файл в Base64
+
+                print(f"Отправка файла {os.path.basename(file_path)} размером {len(file_data)} байт")  # Лог
+                
+                sio.emit('upload_file', {  # Изменить на правильное событие
+                    'to': username,
+                    'from': current_username,
+                    'file': {
+                        'name': os.path.basename(file_path),
+                        'content': encoded_file
+                    }
+                })
+
+                private_chat_listbox = private_chat_windows[username]['listbox']
+                private_chat_listbox.addItem(f"{current_username}: Файл: {os.path.basename(file_path)}")
+
+                # Обновляем ползунок прокрутки
+                scrollbar = private_chat_listbox.verticalScrollBar()
+                scrollbar.setValue(scrollbar.maximum())
+
+        except Exception as e:
+            QMessageBox.critical(main_window, "Ошибка", f"Не удалось отправить файл: {str(e)}")
+
 def send_message():
     """Отправка сообщения в общий чат."""
     global message_entry
@@ -293,8 +337,7 @@ def send_message():
 
     sio.emit('global_message', {'text': message, 'sender': current_username})
 
-    # Удалите эту строку, чтобы не дублировать сообщение
-    # chat_box.append(f"{current_username}: {message}")
+    chat_box.append(f"{current_username}: {message}")
 
     # Обновляем ползунок прокрутки
     scrollbar = chat_box.verticalScrollBar()
@@ -302,40 +345,18 @@ def send_message():
 
     message_entry.clear()
 
-from PySide6.QtGui import QColor  # Импортируем QColor
-
 def update_user_listbox():
+    """Обновление списка пользователей с учетом непрочитанных сообщений."""
     global user_listbox, all_users, unread_counts, private_chat_windows
 
     user_listbox.clear()
     for user in all_users:
         display_name = user
         if user in unread_counts and unread_counts[user] > 0 and user not in private_chat_windows:
-            display_name += " !"
-        
+            display_name += " <b style='color: red;'>!</b>"
         item = QListWidgetItem(display_name)
-        
-        # Устанавливаем светло-синий цвет текста и жирный шрифт
-        item.setForeground(QColor("#add8e6"))  # Светло-синий цвет
-        font = item.font()
-        font.setBold(True)
-        item.setFont(font)
-        
-        # Стиль с белой рамкой
-        user_listbox.setStyleSheet("""
-            QListWidget::item {
-                border: 1px solid white;
-                padding: 5px;
-                margin: 2px;
-                border-radius: 5px;
-            }
-            QListWidget::item:selected {
-                background-color: #0059b3;
-            }
-        """)
-        
+        item.setForeground(QBrush(QColor(USER_COLOR)))  # Устанавливаем цвет текста
         user_listbox.addItem(item)
-
 
 def setup_main_window():
     """Настройка основного окна приложения."""
@@ -440,12 +461,12 @@ if __name__ == "__main__":
     layout.addWidget(password_entry)
 
     button_layout = QHBoxLayout()
-    login_button = QPushButton("Войти", login_window)
+    login_button = QPushButton("Войти")
     login_button.setStyleSheet(f"background-color: {BUTTON_COLOR}; color: {TEXT_COLOR}; border-radius: 10px; padding: 10px;")
     login_button.clicked.connect(login)
     button_layout.addWidget(login_button)
 
-    register_button = QPushButton("Регистрация", login_window)
+    register_button = QPushButton("Регистрация")
     register_button.setStyleSheet(f"background-color: {BUTTON_COLOR}; color: {TEXT_COLOR}; border-radius: 10px; padding: 10px;")
     register_button.clicked.connect(open_registration_window)
     button_layout.addWidget(register_button)

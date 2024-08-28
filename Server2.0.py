@@ -4,11 +4,13 @@ from werkzeug.security import generate_password_hash, check_password_hash
 import sqlite3
 import os
 import jwt
+import base64
+import logging
 
 app = Flask(__name__)
 app.secret_key = '12345678'
 socketio = SocketIO(app, manage_session=True)
-
+logging.basicConfig(level=logging.INFO)
 DATABASE = 'chat.db'
 active_users = {}  # Словарь для хранения активных пользователей и их сессий
 
@@ -40,6 +42,17 @@ def init_db():
                 message TEXT NOT NULL,
                 timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
                 is_read INTEGER DEFAULT 0,
+                FOREIGN KEY (user_id) REFERENCES users(id),
+                FOREIGN KEY (recipient_id) REFERENCES users(id)
+            )
+        ''')
+        cursor.execute('''
+            CREATE TABLE files (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER,
+                recipient_id INTEGER,
+                file_path TEXT NOT NULL,
+                timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY (user_id) REFERENCES users(id),
                 FOREIGN KEY (recipient_id) REFERENCES users(id)
             )
@@ -173,6 +186,72 @@ def handle_connect():
         send("Ошибка: Вы не авторизованы", to=request.sid)
         return
 
+@socketio.on('upload_file')
+def handle_upload_file(data):
+    username = session.get('username')
+    file_data = data.get('file')  # Данные о файле (Base64)
+    recipient = data.get('to')  # Получатель файла
+
+    if not username or not file_data or not recipient:
+        emit('error', {'message': 'Ошибка: Вы не авторизованы или не указаны данные файла'})
+        return
+
+    # Декодирование файла из Base64
+    try:
+        file_content = base64.b64decode(file_data['content'])
+        logging.info(f"Файл от {username} успешно декодирован.")
+    except Exception as e:
+        emit('error', {'message': f'Ошибка декодирования файла: {str(e)}'})
+        logging.error(f"Ошибка декодирования файла от {username}: {str(e)}")
+        return
+
+    file_name = file_data['name']
+    file_path = f"uploads/{file_name}"
+
+    # Сохранение файла на сервере
+    if not os.path.exists('uploads'):
+        os.makedirs('uploads')
+    
+    try:
+        with open(file_path, 'wb') as file:
+            file.write(file_content)
+        logging.info(f"Файл {file_name} от {username} успешно сохранён на сервере.")
+    except Exception as e:
+        emit('error', {'message': f'Ошибка сохранения файла: {str(e)}'})
+        logging.error(f"Ошибка сохранения файла {file_name} от {username}: {str(e)}")
+        return
+    
+    # Сохранение информации о файле в базе данных
+    user_id = session.get('user_id')
+    conn, cur = get_db()
+    cur.execute("SELECT id FROM users WHERE username = ?", (recipient,))
+    recipient_data = cur.fetchone()
+
+    if recipient_data:
+        recipient_id = recipient_data[0]
+        cur.execute("INSERT INTO files (user_id, recipient_id, file_path) VALUES (?, ?, ?)", 
+                    (user_id, recipient_id, file_path))
+        conn.commit()
+        logging.info(f"Информация о файле {file_name} успешно сохранена в базе данных для пользователя {recipient}.")
+
+        # Отправляем уведомление получателю
+        recipient_sid = next((sid for sid, name in active_users.items() if name == recipient), None)
+        if recipient_sid:
+            emit('file_received', {'from': username, 'file_name': file_name, 'file_path': file_path}, room=recipient_sid)
+            logging.info(f"Файл {file_name} успешно отправлен пользователю {recipient}.")
+        else:
+            emit('error', {'message': 'Ошибка: Получатель не в сети'})
+            logging.warning(f"Ошибка: Получатель {recipient} не в сети.")
+    else:
+        emit('error', {'message': 'Ошибка: Получатель не найден в базе данных'})
+        logging.warning(f"Ошибка: Получатель {recipient} не найден в базе данных.")
+
+    conn.close()
+    
+    # Уведомляем отправителя о завершении загрузки
+    emit('file_upload_complete', {'file_name': file_name, 'recipient': recipient})
+    logging.info(f"Отправитель {username} уведомлён о завершении загрузки файла {file_name}.")
+    
 @socketio.on('global_message')
 def handle_global_message(data):
     username = session.get('username')
@@ -317,6 +396,7 @@ def handle_disconnect():
             if room.startswith(f"room_{username}_") or room.endswith(f"_{username}"):
                 leave_room(room)
 
+ 
 if __name__ == '__main__':
     init_db()
     socketio.run(app, host='10.1.3.187', port=12345)
