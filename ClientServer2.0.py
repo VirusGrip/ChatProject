@@ -1,10 +1,10 @@
 import os
 import socketio
 import requests
-from PySide6.QtWidgets import QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel, QLineEdit, QTextEdit, QListWidget, QMessageBox, QDialog, QListWidgetItem, QFileDialog
+from PySide6.QtWidgets import QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel, QLineEdit, QTextEdit, QListWidget, QMessageBox, QDialog, QListWidgetItem, QFileDialog,  QTextBrowser
 from PySide6.QtCore import Qt, QTimer
-from PySide6.QtGui import QColor, QBrush
-import base64
+from PySide6.QtGui import QColor, QBrush, QTextCursor
+import webbrowser
 
 HOST = 'http://10.1.3.187:12345'
 sio = socketio.Client()
@@ -50,6 +50,12 @@ def register():
     except Exception as e:
         QMessageBox.critical(reg_window, "Ошибка", str(e))
 
+def create_download_button(file_name, file_data):
+    """Создает кнопку для загрузки файла и связывает ее с функцией обработки."""
+    button = QPushButton(f"Скачать {file_name}")
+    button.clicked.connect(lambda: save_file(file_name, file_data))
+    return button
+
 def send_file(recipient_username):
     """Открывает диалог для выбора файла и отправляет его на сервер."""
     file_path, _ = QFileDialog.getOpenFileName(main_window, "Выберите файл")
@@ -59,7 +65,11 @@ def send_file(recipient_username):
             file_data = file.read()
             # Отправляем файл на сервер
             sio.emit('file_upload', {'file_name': file_name, 'file_data': file_data, 'to': recipient_username})
+        
+        # Добавляем сообщение о загруженном файле в окно чата
         chat_box.append(f"Вы отправили файл: {file_name}")
+        chat_box.append("")  # Добавление пустой строки для форматирования
+
 
 def open_registration_window():
     """Открывает окно регистрации."""
@@ -170,20 +180,38 @@ def save_file(file_name, file_data):
             QMessageBox.information(main_window, "Успех", f"Файл сохранен как {file_path}")
         except Exception as e:
             QMessageBox.critical(main_window, "Ошибка", f"Не удалось сохранить файл: {str(e)}")
-
-@sio.event
 def file_received(data):
     """Обработчик для получения файлов."""
-    print("Received data:", data)  # Вывод данных для проверки
     from_user = data.get('from')
     file_name = data.get('file_name')
-    file_data = data.get('file_data')
-    
-    if file_name:
-        save_file(file_name, file_data)
-        chat_box.append(f"{from_user}: Отправлен файл: {file_name}")
+    file_url = data.get('file_path')  # Получаем URL файла из данных
+
+    if file_name and file_url:
+        # Вставляем кликабельную ссылку в чат
+        link_html = f"<a href='{file_url}' style='color: {USER_COLOR}; text-decoration: none;'>{file_name}</a>"
+        chat_box.append(f"{from_user}: Отправлен файл: {link_html}")
+        chat_box.setTextInteractionFlags(Qt.TextBrowserInteraction)  # Разрешаем взаимодействие с текстом (клики по ссылкам)
+        
+        # Автоматически прокручиваем чат вниз
+        chat_box.verticalScrollBar().setValue(chat_box.verticalScrollBar().maximum())
     else:
-        chat_box.append(f"{from_user}: Получен файл, но имя файла не указано.")
+        chat_box.append(f"{from_user}: Получен файл, но имя файла или URL не указаны.")
+
+def handle_link_click(url):
+    """Обработчик кликов по ссылкам."""
+    webbrowser.open(url.toString())  # Открывает ссылку в браузере
+
+
+def open_link(url):
+    """Открывает ссылку в веб-браузере."""
+    webbrowser.open(url)
+
+def handle_link_click(event):
+    """Обработчик для открытия ссылок."""
+    cursor = chat_box.textCursor()
+    cursor.select(QTextCursor.LinkUnderCursor)
+    link = cursor.selectedText()
+    open_link(link)
 
 @sio.event
 def private_message(data):
@@ -372,8 +400,9 @@ def setup_main_window():
     chat_frame = QWidget()
     chat_layout = QVBoxLayout(chat_frame)
 
-    chat_box = QTextEdit()
-    chat_box.setReadOnly(True)
+    # Заменяем QTextEdit на QTextBrowser
+    chat_box = QTextBrowser()
+    chat_box.setOpenExternalLinks(True)  # Это автоматически позволяет открывать ссылки во внешнем браузере
     chat_box.setStyleSheet(f"""
         background-color: {ENTRY_BG_COLOR};
         border-radius: 10px;
@@ -418,6 +447,9 @@ def setup_main_window():
 
     if not history_loaded:
         sio.emit('request_chat_history', {'type': 'global'})
+
+    # Устанавливаем обработчик кликов по ссылкам
+    chat_box.anchorClicked.connect(handle_link_click)
 
     main_window.show()
 
