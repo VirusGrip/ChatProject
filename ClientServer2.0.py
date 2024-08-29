@@ -5,8 +5,9 @@ from PySide6.QtWidgets import QApplication, QMainWindow, QWidget, QVBoxLayout, Q
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QColor, QBrush, QTextCursor
 import webbrowser
+import urllib.parse
 
-HOST = 'http://10.1.3.187:12345'
+HOST = 'http://192.168.1.127:12345'
 sio = socketio.Client()
 token = None
 
@@ -50,6 +51,10 @@ def register():
     except Exception as e:
         QMessageBox.critical(reg_window, "Ошибка", str(e))
 
+def create_file_link(file_name):
+    """Создает ссылку для файла, корректно кодируя имя файла."""
+    return f"{HOST}/uploads/{urllib.parse.quote(file_name)}"
+
 def create_download_button(file_name, file_data):
     """Создает кнопку для загрузки файла и связывает ее с функцией обработки."""
     button = QPushButton(f"Скачать {file_name}")
@@ -67,8 +72,10 @@ def send_file(recipient_username):
             sio.emit('file_upload', {'file_name': file_name, 'file_data': file_data, 'to': recipient_username})
         
         # Добавляем сообщение о загруженном файле в окно чата
-        chat_box.append(f"Вы отправили файл: {file_name}")
+        file_url = create_file_link(file_name)
+        chat_box.append(f"<a href='{file_url}' style='color: {USER_COLOR}; text-decoration: none;'>Вы отправили файл: {file_name}</a>")
         chat_box.append("")  # Добавление пустой строки для форматирования
+
 
 
 def open_registration_window():
@@ -184,7 +191,7 @@ def file_received(data):
     """Обработчик для получения файлов."""
     from_user = data.get('from')
     file_name = data.get('file_name')
-    file_url = data.get('file_path')  # Получаем URL файла из данных
+    file_url = create_file_link(file_name)  # Исправленный путь для доступа к файлам
 
     if file_name and file_url:
         # Вставляем кликабельную ссылку в чат
@@ -196,6 +203,8 @@ def file_received(data):
         chat_box.verticalScrollBar().setValue(chat_box.verticalScrollBar().maximum())
     else:
         chat_box.append(f"{from_user}: Получен файл, но имя файла или URL не указаны.")
+
+
 
 def handle_link_click(url):
     """Обработчик кликов по ссылкам."""
@@ -251,29 +260,37 @@ def private_message(data):
 
 @sio.event
 def chat_history(data):
-    """Обработчик для получения истории сообщений."""
     global history_loaded
     messages = data.get('messages', [])
     chat_type = data.get('type', 'unknown')
     username = data.get('username', '')
 
-    print(f"chat_history: {chat_type}, {username}")
-    print(f"private_chat_windows: {private_chat_windows}")
-
     if chat_type == 'global':
         if not history_loaded:
             for msg in messages:
-                chat_box.append(f"{msg.get('sender', 'Unknown')}: {msg.get('text', '')}")
+                if 'file_name' in msg:
+                    link_html = f"<a href='{msg.get('file_path')}' style='color: {USER_COLOR}; text-decoration: none;'>{msg.get('file_name')}</a>"
+                    chat_box.append(f"{msg.get('sender', 'Unknown')}: Отправлен файл: {link_html}")
+                else:
+                    chat_box.append(f"{msg.get('sender', 'Unknown')}: {msg.get('text', '')}")
             
-            # Обновляем ползунок прокрутки
             scrollbar = chat_box.verticalScrollBar()
             scrollbar.setValue(scrollbar.maximum())
             history_loaded = True
-    elif chat_type == 'private':
-        if username in private_chat_windows:
-            text_edit = private_chat_windows[username]['text_edit']
-            for msg in messages:
+    elif chat_type == 'private' and username in private_chat_windows:
+        text_edit = private_chat_windows[username]['text_edit']
+        for msg in messages:
+            if 'file_name' in msg:
+                link_html = f"<a href='{msg.get('file_path')}' style='color: {USER_COLOR}; text-decoration: none;'>{msg.get('file_name')}</a>"
+                text_edit.append(f"{msg.get('sender', 'Unknown')}: Отправлен файл: {link_html}")
+            else:
                 text_edit.append(f"{msg.get('sender', 'Unknown')}: {msg.get('text', '')}")
+
+        # Прокрутка вниз
+        scrollbar = text_edit.verticalScrollBar()
+        scrollbar.setValue(scrollbar.maximum())
+
+
 
 def send_message():
     """Отправка сообщения в общий чат или личный чат."""

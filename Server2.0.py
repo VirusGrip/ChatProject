@@ -13,7 +13,7 @@ socketio = SocketIO(app, manage_session=True)
 
 # Конфигурация загрузки файлов
 UPLOAD_FOLDER = 'uploads'
-HOST = 'http://10.1.3.187:12345'
+HOST = '192.168.1.127:12345'
 if not os.path.exists(UPLOAD_FOLDER):
     os.makedirs(UPLOAD_FOLDER)
 
@@ -112,10 +112,10 @@ def upload_file():
     
     file.save(file_path)
 
-    # Возвращаем URL файла
-    file_url = f"{HOST}/files/{filename}"
+    # Формируем URL для доступа к файлу
+    file_url = f"http://{HOST}/files/{filename}"
 
-    # Оповещаем через сокет, если нужно
+    # Оповещаем через сокет
     recipient = request.form.get('to')
     if recipient:
         conn, cur = get_db()
@@ -129,7 +129,7 @@ def upload_file():
             print(f"File record inserted: {filename}")
             recipient_sid = next((sid for sid, name in active_users.items() if name == recipient), None)
             if recipient_sid:
-                emit('file_received', {'from': session['username'], 'file_path': file_url}, room=recipient_sid)
+                emit('file_received', {'from': session['username'], 'file_url': file_url}, room=recipient_sid)
         conn.close()
 
     return jsonify({"file_url": file_url}), 200
@@ -143,17 +143,13 @@ def uploaded_file(filename):
         return jsonify({"message": "File not found"}), 404
 
 
-@app.route('/download/<filename>')
+@app.route('/uploads/<filename>')
 def download_file(filename):
-    file_path = os.path.join(UPLOAD_FOLDER, filename)
-    if os.path.exists(file_path):
-        return send_from_directory(UPLOAD_FOLDER, filename, as_attachment=True)
-    else:
-        return jsonify({"message": "Файл не найден"}), 404
+    return send_from_directory('uploads', filename)
     
 @socketio.on('file_received')
 def handle_file_received(data):
-    file_url = f"{HOST}/download/{data['file_path']}"
+    file_url = f"http://{HOST}/files/{data['file_path']}"
     emit('file_received', {'from': data['from'], 'file_url': file_url}, room=request.sid)
 
 @app.route('/register', methods=['POST'])
@@ -454,4 +450,4 @@ def handle_disconnect():
 
 if __name__ == '__main__':
     init_db()
-    socketio.run(app, host='10.1.3.187', port=12345)
+    socketio.run(app, host='192.168.1.127', port=12345)
