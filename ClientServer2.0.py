@@ -4,6 +4,7 @@ import requests
 from PySide6.QtWidgets import QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel, QLineEdit, QTextEdit, QListWidget, QMessageBox, QDialog, QListWidgetItem, QFileDialog
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QColor, QBrush
+import base64
 
 HOST = 'http://10.1.3.187:12345'
 sio = socketio.Client()
@@ -48,6 +49,17 @@ def register():
             QMessageBox.critical(reg_window, "Ошибка", response.json().get('message', 'Неизвестная ошибка'))
     except Exception as e:
         QMessageBox.critical(reg_window, "Ошибка", str(e))
+
+def send_file(recipient_username):
+    """Открывает диалог для выбора файла и отправляет его на сервер."""
+    file_path, _ = QFileDialog.getOpenFileName(main_window, "Выберите файл")
+    if file_path:
+        file_name = os.path.basename(file_path)
+        with open(file_path, 'rb') as file:
+            file_data = file.read()
+            # Отправляем файл на сервер
+            sio.emit('file_upload', {'file_name': file_name, 'file_data': file_data, 'to': recipient_username})
+        chat_box.append(f"Вы отправили файл: {file_name}")
 
 def open_registration_window():
     """Открывает окно регистрации."""
@@ -163,15 +175,12 @@ def save_file(file_name, file_data):
 def file_received(data):
     """Обработчик для получения файлов."""
     from_user = data['from']
-    file_url = data['file_url']
     file_name = data['file_name']
     file_data = data['file_data']
-    text_edit = None
-
-    if from_user == current_username:
-        if file_name:
-            save_file(file_name, file_data)
-            text_edit.append(f"{from_user}: Отправлен файл: {file_name}")
+    
+    if file_name:
+        save_file(file_name, file_data)
+        chat_box.append(f"{from_user}: Отправлен файл: {file_name}")
 
 @sio.event
 def private_message(data):
@@ -392,6 +401,11 @@ def setup_main_window():
     send_button.clicked.connect(send_message)
     input_layout.addWidget(send_button)
     
+    send_file_button = QPushButton("Отправить файл")
+    send_file_button.setStyleSheet(f"background-color: {BUTTON_COLOR}; color: {TEXT_COLOR}; border-radius: 10px; padding: 10px;")
+    send_file_button.clicked.connect(lambda: send_file(current_username))
+    input_layout.addWidget(send_file_button)
+    
     chat_layout.addWidget(input_frame)
     layout.addWidget(chat_frame)
 
@@ -403,6 +417,7 @@ def setup_main_window():
         sio.emit('request_chat_history', {'type': 'global'})
 
     main_window.show()
+
 
 def open_login_window():
     """Открытие окна входа."""

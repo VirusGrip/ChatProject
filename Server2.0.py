@@ -134,10 +134,14 @@ def upload_file():
 
     return jsonify({"file_url": file_url}), 200
 
-
 @app.route('/files/<filename>')
 def uploaded_file(filename):
-    return send_from_directory(UPLOAD_FOLDER, filename)  # Исправлено: используем относительный путь к папке uploads
+    file_path = os.path.join(UPLOAD_FOLDER, filename)
+    if os.path.exists(file_path):
+        return send_from_directory(UPLOAD_FOLDER, filename)
+    else:
+        return jsonify({"message": "File not found"}), 404
+
 
 @app.route('/download/<filename>')
 def download_file(filename):
@@ -255,54 +259,52 @@ def handle_connect():
     else:
         emit('error', {'message': 'Необходим токен для подключения'})
 
-@socketio.on('upload_file')
-def handle_upload_file(data):
+@socketio.on('file_upload')
+def handle_file_upload(data):
     username = session.get('username')
-    file_data = data.get('file')
-    recipient = data.get('to')
+    file_name = data.get('file_name')
+    file_data = data.get('file_data')
 
-    if not username or not file_data or not recipient:
+    if not username or not file_name or not file_data:
         emit('error', {'message': 'Ошибка: Вы не авторизованы или не указаны данные файла'})
         return
 
-    try:
-        file_content = file_data['content'].encode('latin1')  # Преобразование строки обратно в байты
-    except Exception as e:
-        emit('error', {'message': f'Ошибка декодирования файла: {str(e)}'})
-        return
-
-    file_name = file_data['name']
     file_path = os.path.join(UPLOAD_FOLDER, file_name)
-    
-    print(f"Saving file to {file_path}, content length: {len(file_content)}")
 
     try:
+        # Сохраняем файл на сервере
         with open(file_path, 'wb') as file:
-            file.write(file_content)
+            file.write(file_data)
         print(f"File saved: {file_name}")
+
+        # Вставляем информацию о файле в базу данных
+        user_id = session.get('user_id')
+        recipient = data.get('to')
+
+        if recipient:
+            conn, cur = get_db()
+            cur.execute("SELECT id FROM users WHERE username = ?", (recipient,))
+            recipient_data = cur.fetchone()
+
+            if recipient_data:
+                recipient_id = recipient_data[0]
+                cur.execute("INSERT INTO files (user_id, recipient_id, file_path) VALUES (?, ?, ?)",
+                            (user_id, recipient_id, file_name))
+                conn.commit()
+                print(f"File record inserted: {file_name}")
+
+                # Уведомляем получателя о новом файле
+                recipient_sid = next((sid for sid, name in active_users.items() if name == recipient), None)
+                if recipient_sid:
+                    emit('file_received', {'from': username, 'file_path': f"{HOST}/files/{file_name}"}, room=recipient_sid)
+            else:
+                emit('error', {'message': 'Ошибка: Получатель не найден в базе данных'})
+            conn.close()
+        else:
+            emit('error', {'message': 'Ошибка: Получатель не указан'})
+
     except Exception as e:
         emit('error', {'message': f'Ошибка сохранения файла: {str(e)}'})
-        return
-
-    user_id = session.get('user_id')
-    conn, cur = get_db()
-    cur.execute("SELECT id FROM users WHERE username = ?", (recipient,))
-    recipient_data = cur.fetchone()
-
-    if recipient_data:
-        recipient_id = recipient_data[0]
-        cur.execute("INSERT INTO files (user_id, recipient_id, file_path) VALUES (?, ?, ?)", 
-                    (user_id, recipient_id, file_name))
-        conn.commit()
-        print(f"File record inserted: {file_name}")
-
-        recipient_sid = next((sid for sid, name in active_users.items() if name == recipient), None)
-        if recipient_sid:
-            emit('file_received', {'from': username, 'file_path': f"{HOST}/files/{file_name}"}, room=recipient_sid)
-    else:
-        emit('error', {'message': 'Ошибка: Получатель не найден в базе данных'})
-
-    conn.close()
 
 
 
