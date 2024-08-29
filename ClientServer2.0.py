@@ -2,9 +2,8 @@ import os
 import socketio
 import requests
 from PySide6.QtWidgets import QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel, QLineEdit, QTextEdit, QListWidget, QMessageBox, QDialog, QListWidgetItem, QFileDialog
-from PySide6.QtWidgets import QMainWindow, QTextEdit, QVBoxLayout, QPushButton, QWidget, QFileDialog, QApplication
 from PySide6.QtCore import Qt, QTimer
-from PySide6.QtGui import QTextCursor, QColor, QFont, QBrush
+from PySide6.QtGui import QColor, QBrush
 
 HOST = 'http://10.1.3.187:12345'
 sio = socketio.Client()
@@ -149,29 +148,66 @@ def global_message(data):
         scrollbar = chat_box.verticalScrollBar()
         scrollbar.setValue(scrollbar.maximum())
 
+def save_file(file_name, file_data):
+    """Сохранение полученного файла на диск."""
+    file_path = QFileDialog.getSaveFileName(main_window, "Сохранить файл", file_name)[0]
+    if file_path:
+        try:
+            with open(file_path, 'wb') as file:
+                file.write(file_data)
+            QMessageBox.information(main_window, "Успех", f"Файл сохранен как {file_path}")
+        except Exception as e:
+            QMessageBox.critical(main_window, "Ошибка", f"Не удалось сохранить файл: {str(e)}")
+
+@sio.event
+def file_received(data):
+    """Обработчик для получения файлов."""
+    from_user = data['from']
+    file_url = data['file_url']
+    file_name = data['file_name']
+    file_data = data['file_data']
+    text_edit = None
+
+    if from_user == current_username:
+        if file_name:
+            save_file(file_name, file_data)
+            text_edit.append(f"{from_user}: Отправлен файл: {file_name}")
+
 @sio.event
 def private_message(data):
     """Обработчик для получения личных сообщений."""
     sender = data.get('from')
     recipient = data.get('to')
     message = data.get('text')
+    file_name = data.get('file_name')
+    file_data = data.get('file_data')
+
+    print(f"Получено сообщение от {sender} для {recipient}")
+    if file_name:
+        print(f"Получен файл: {file_name}, размер: {len(file_data)} байт")
+    if message:
+        print(f"Сообщение: {message}")
 
     if recipient == current_username:
-        if sender in private_chat_windows:
-            private_chat_text_edit = private_chat_windows[sender]['text_edit']
-            private_chat_text_edit.append(f"{sender}: {message}")
+        if recipient in private_chat_windows:
+            private_chat_text_edit = private_chat_windows[recipient]['text_edit']
+            
+            if file_name and file_data:
+                # Обрабатываем файл: сохраняем его и добавляем сообщение
+                save_file(file_name, file_data)
+                private_chat_text_edit.append(f"{sender}: Отправлен файл: {file_name}")
+            else:
+                private_chat_text_edit.append(f"{sender}: {message}")
 
             # Обновляем ползунок прокрутки
             scrollbar = private_chat_text_edit.verticalScrollBar()
             scrollbar.setValue(scrollbar.maximum())
         else:
-            # Если чат с этим пользователем не открыт, ничего не делаем
-            pass
+            print(f"Чат с пользователем {recipient} не открыт")
 
         if sender != current_username:
             unread_counts[sender] = unread_counts.get(sender, 0) + 1
             QTimer.singleShot(0, update_user_listbox)
-
 
 @sio.event
 def chat_history(data):
@@ -192,170 +228,109 @@ def chat_history(data):
             # Обновляем ползунок прокрутки
             scrollbar = chat_box.verticalScrollBar()
             scrollbar.setValue(scrollbar.maximum())
-            
             history_loaded = True
     elif chat_type == 'private':
         if username in private_chat_windows:
-            private_chat_text_edit = private_chat_windows[username].get('text_edit')
-            if private_chat_text_edit is not None:
-                for msg in messages:
-                    private_chat_text_edit.append(f"{msg.get('sender', 'Unknown')}: {msg.get('text', '')}")
-                
-                # Обновляем ползунок прокрутки
-                scrollbar = private_chat_text_edit.verticalScrollBar()
-                scrollbar.setValue(scrollbar.maximum())
-            else:
-                print(f"Ключ 'text_edit' отсутствует в private_chat_windows для пользователя {username}")
-        else:
-            print(f"Чат с пользователем {username} не найден в private_chat_windows")
-    else:
-        print(f"Неизвестный тип чата: {chat_type}")
-
-
-
-def start_private_chat(username):
-    """Открытие окна для личного чата с пользователем."""
-    global private_chat_windows
-
-    if username in private_chat_windows:
-        private_chat_windows[username]['window'].show()
-    else:
-        private_chat_window = QMainWindow()
-        private_chat_window.setWindowTitle(f"Чат с {username}")
-        private_chat_window.setStyleSheet(f"background-color: {BG_COLOR};")
-
-        layout = QVBoxLayout()
-
-        # Используем QTextEdit для сообщений
-        private_chat_text_edit = QTextEdit()
-        private_chat_text_edit.setReadOnly(True)  # Устанавливаем режим только для чтения
-        private_chat_text_edit.setStyleSheet(f"""
-            background-color: {ENTRY_BG_COLOR};
-            border-radius: 10px;
-            padding: 10px;
-            color: {TEXT_COLOR};
-            border: 2px solid {BUTTON_COLOR};
-        """)
-        layout.addWidget(private_chat_text_edit)
-
-        private_message_entry = QTextEdit()
-        private_message_entry.setStyleSheet(f"""
-            background-color: {ENTRY_BG_COLOR};
-            border-radius: 10px;
-            padding: 10px;
-            color: {TEXT_COLOR};
-            border: 2px solid {BUTTON_COLOR}; /* Основная рамка */
-        """)
-        layout.addWidget(private_message_entry)
-
-        button_layout = QHBoxLayout()
-        send_button = QPushButton("Отправить")
-        send_button.setStyleSheet(f"background-color: {BUTTON_COLOR}; color: {TEXT_COLOR}; border-radius: 10px; padding: 10px;")
-        send_button.clicked.connect(lambda: send_private_message(username, private_chat_text_edit))
-        button_layout.addWidget(send_button)
-
-        attach_button = QPushButton("Прикрепить файл")
-        attach_button.setStyleSheet(f"background-color: {BUTTON_COLOR}; color: {TEXT_COLOR}; border-radius: 10px; padding: 10px;")
-        attach_button.clicked.connect(lambda: attach_file(username, private_chat_text_edit))
-        button_layout.addWidget(attach_button)
-
-        layout.addLayout(button_layout)
-
-        chat_container = QWidget()
-        chat_container.setLayout(layout)
-        
-        private_chat_window.setCentralWidget(chat_container)
-        private_chat_window.show()
-
-        private_chat_windows[username] = {
-            'window': private_chat_window,
-            'text_edit': private_chat_text_edit,
-            'entry': private_message_entry
-        }
-
-        sio.emit('request_chat_history', {'type': 'private', 'username': username})
-
-        if username in unread_counts:
-            unread_counts[username] = 0
-            update_user_listbox()
-
-
-def send_private_message(username, text_edit):
-    """Отправка личного сообщения."""
-    if username not in private_chat_windows:
-        QMessageBox.warning(main_window, "Ошибка", f"Чат с {username} не открыт.")
-        return
-
-    message = private_chat_windows[username]['entry'].toPlainText()
-    if not message:
-        return
-
-    sio.emit('private_message', {'to': username, 'text': message, 'from': current_username})
-
-    text_edit.append(f"{current_username}: {message}")
-
-    # Обновляем ползунок прокрутки
-    scrollbar = text_edit.verticalScrollBar()
-    scrollbar.setValue(scrollbar.maximum())
-
-    private_chat_windows[username]['entry'].clear()
-
-    if username in unread_counts:
-        unread_counts[username] = unread_counts.get(username, 0)
-        update_user_listbox()
-
-def attach_file(username, text_edit):
-    """Выбор и отправка файла в личном чате."""
-    if username not in private_chat_windows:
-        QMessageBox.warning(main_window, "Ошибка", f"Чат с {username} не открыт.")
-        return
-
-    file_path, _ = QFileDialog.getOpenFileName(main_window, "Выберите файл для отправки")
-    if file_path:
-        with open(file_path, 'rb') as file:
-            file_data = file.read()
-            sio.emit('private_message', {
-                'to': username,
-                'from': current_username,
-                'text': f"Файл: {os.path.basename(file_path)}",
-                'file': file_data
-            })
-            text_edit.append(f"{current_username}: Файл: {os.path.basename(file_path)}")
-
-            # Обновляем ползунок прокрутки
-            scrollbar = text_edit.verticalScrollBar()
-            scrollbar.setValue(scrollbar.maximum())
+            text_edit = private_chat_windows[username]['text_edit']
+            for msg in messages:
+                text_edit.append(f"{msg.get('sender', 'Unknown')}: {msg.get('text', '')}")
 
 def send_message():
-    """Отправка сообщения в общий чат."""
-    global message_entry
+    """Отправка сообщения в общий чат или личный чат."""
+    global current_username
 
-    message = message_entry.toPlainText()
-    if not message:
-        return
+    text = message_entry.toPlainText().strip()
+    if text:
+        message_entry.clear()
+        sio.emit('global_message', {'text': text, 'sender': current_username})
+        chat_box.append(f"{current_username}: {text}")
 
-    sio.emit('global_message', {'text': message, 'sender': current_username})
-
-    chat_box.append(f"{current_username}: {message}")
-
-    # Обновляем ползунок прокрутки
-    scrollbar = chat_box.verticalScrollBar()
-    scrollbar.setValue(scrollbar.maximum())
-
-    message_entry.clear()
+        # Обновляем ползунок прокрутки
+        scrollbar = chat_box.verticalScrollBar()
+        scrollbar.setValue(scrollbar.maximum())
 
 def update_user_listbox():
-    """Обновление списка пользователей с учетом непрочитанных сообщений."""
-    global user_listbox, all_users, unread_counts, private_chat_windows
+    """Обновление списка пользователей."""
+    global user_listbox, all_users, unread_counts
 
     user_listbox.clear()
     for user in all_users:
-        display_name = user
-        if user in unread_counts and unread_counts[user] > 0 and user not in private_chat_windows:
-            display_name += " <b style='color: red;'>!</b>"
-        item = QListWidgetItem(display_name)
-        item.setForeground(QBrush(QColor(USER_COLOR)))  # Устанавливаем цвет текста
+        if user == current_username:
+            continue
+        item_text = f"{user} ({unread_counts.get(user, 0)} нов.)"
+        item = QListWidgetItem(item_text)
+        item.setForeground(QBrush(QColor(USER_COLOR)))
         user_listbox.addItem(item)
+
+def start_private_chat(username):
+    """Открытие личного чата с пользователем."""
+    global private_chat_windows
+
+    if username in private_chat_windows:
+        private_chat_windows[username]['window'].raise_()
+        private_chat_windows[username]['window'].activateWindow()
+        return
+
+    private_chat_window = QWidget()
+    private_chat_window.setWindowTitle(f"Личный чат с {username}")
+    private_chat_window.setStyleSheet(f"background-color: {BG_COLOR};")
+
+    layout = QVBoxLayout(private_chat_window)
+
+    text_edit = QTextEdit()
+    text_edit.setReadOnly(True)
+    text_edit.setStyleSheet(f"""
+        background-color: {ENTRY_BG_COLOR};
+        border-radius: 10px;
+        padding: 10px;
+        color: {TEXT_COLOR};
+        border: 2px solid {BUTTON_COLOR};
+    """)
+    layout.addWidget(text_edit)
+
+    input_frame = QWidget()
+    input_layout = QHBoxLayout(input_frame)
+    
+    private_message_entry = QTextEdit()
+    private_message_entry.setStyleSheet(f"""
+        background-color: {ENTRY_BG_COLOR};
+        border-radius: 10px;
+        padding: 10px;
+        color: {TEXT_COLOR};
+        border: 2px solid {BUTTON_COLOR};
+        border-top: 3px solid {BUTTON_HOVER_COLOR};
+    """)
+    input_layout.addWidget(private_message_entry)
+    
+    send_button = QPushButton("Отправить")
+    send_button.setStyleSheet(f"background-color: {BUTTON_COLOR}; color: {TEXT_COLOR}; border-radius: 10px; padding: 10px;")
+    send_button.clicked.connect(lambda: send_private_message(username, private_message_entry))
+    input_layout.addWidget(send_button)
+    
+    layout.addWidget(input_frame)
+
+    private_chat_windows[username] = {
+        'window': private_chat_window,
+        'text_edit': text_edit,
+        'message_entry': private_message_entry
+    }
+
+    private_chat_window.show()
+
+    # Запрашиваем историю чата
+    sio.emit('request_chat_history', {'type': 'private', 'username': username})
+
+def send_private_message(username, message_entry):
+    """Отправка личного сообщения."""
+    text = message_entry.toPlainText().strip()
+    if text:
+        message_entry.clear()
+        sio.emit('private_message', {'to': username, 'text': text, 'from': current_username})
+        private_chat_windows[username]['text_edit'].append(f"{current_username}: {text}")
+
+        # Обновляем ползунок прокрутки
+        scrollbar = private_chat_windows[username]['text_edit'].verticalScrollBar()
+        scrollbar.setValue(scrollbar.maximum())
 
 def setup_main_window():
     """Настройка основного окна приложения."""
@@ -367,7 +342,7 @@ def setup_main_window():
 
     central_widget = QWidget()
     main_window.setCentralWidget(central_widget)
-    layout = QHBoxLayout(central_widget)  # Изменен макет на горизонтальный
+    layout = QHBoxLayout(central_widget)
 
     user_frame = QWidget()
     user_layout = QVBoxLayout(user_frame)
@@ -379,13 +354,12 @@ def setup_main_window():
     user_listbox.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
     user_listbox.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
     user_layout.addWidget(user_listbox)
-    user_frame.setFixedWidth(200)  # Устанавливаем фиксированную ширину для списка пользователей
+    user_frame.setFixedWidth(200)
     layout.addWidget(user_frame)
 
     chat_frame = QWidget()
     chat_layout = QVBoxLayout(chat_frame)
 
-    # Добавляем QTextEdit с ползунком
     chat_box = QTextEdit()
     chat_box.setReadOnly(True)
     chat_box.setStyleSheet(f"""
@@ -402,15 +376,14 @@ def setup_main_window():
     input_frame = QWidget()
     input_layout = QHBoxLayout(input_frame)
     
-    # Основной стиль для поля ввода сообщений
     message_entry = QTextEdit()
     message_entry.setStyleSheet(f"""
         background-color: {ENTRY_BG_COLOR};
         border-radius: 10px;
         padding: 10px;
         color: {TEXT_COLOR};
-        border: 2px solid {BUTTON_COLOR}; /* Основная рамка */
-        border-top: 3px solid {BUTTON_HOVER_COLOR}; /* Дополнительная рамка сверху для выделения */
+        border: 2px solid {BUTTON_COLOR};
+        border-top: 3px solid {BUTTON_HOVER_COLOR};
     """)
     input_layout.addWidget(message_entry)
     
@@ -419,8 +392,8 @@ def setup_main_window():
     send_button.clicked.connect(send_message)
     input_layout.addWidget(send_button)
     
-    chat_layout.addWidget(input_frame)  # Перемещаем ввод сообщений в chat_layout
-    layout.addWidget(chat_frame)  # Добавляем chat_frame в основной layout
+    chat_layout.addWidget(input_frame)
+    layout.addWidget(chat_frame)
 
     user_listbox.itemDoubleClicked.connect(lambda item: start_private_chat(item.text().split(' ')[0]))
 
@@ -431,20 +404,19 @@ def setup_main_window():
 
     main_window.show()
 
-if __name__ == "__main__":
-    app = QApplication([])
+def open_login_window():
+    """Открытие окна входа."""
+    global login_window, username_entry, password_entry
 
-    login_window = QMainWindow()
+    login_window = QDialog()
     login_window.setWindowTitle("Вход")
     login_window.setStyleSheet(f"background-color: {BG_COLOR};")
 
-    central_widget = QWidget()
-    login_window.setCentralWidget(central_widget)
-    layout = QVBoxLayout(central_widget)
+    layout = QVBoxLayout()
 
-    login_label = QLabel("Логин", login_window)
-    login_label.setStyleSheet(f"color: {HEADING_COLOR}; font-weight: bold;")
-    layout.addWidget(login_label)
+    username_label = QLabel("Логин", login_window)
+    username_label.setStyleSheet(f"color: {HEADING_COLOR}; font-weight: bold;")
+    layout.addWidget(username_label)
 
     username_entry = QLineEdit(login_window)
     username_entry.setStyleSheet(f"background-color: {ENTRY_BG_COLOR}; border-radius: 10px; padding: 10px; color: {TEXT_COLOR};")
@@ -460,17 +432,23 @@ if __name__ == "__main__":
     layout.addWidget(password_entry)
 
     button_layout = QHBoxLayout()
-    login_button = QPushButton("Войти")
+    login_button = QPushButton("Войти", login_window)
     login_button.setStyleSheet(f"background-color: {BUTTON_COLOR}; color: {TEXT_COLOR}; border-radius: 10px; padding: 10px;")
     login_button.clicked.connect(login)
     button_layout.addWidget(login_button)
 
-    register_button = QPushButton("Регистрация")
+    register_button = QPushButton("Регистрация", login_window)
     register_button.setStyleSheet(f"background-color: {BUTTON_COLOR}; color: {TEXT_COLOR}; border-radius: 10px; padding: 10px;")
     register_button.clicked.connect(open_registration_window)
     button_layout.addWidget(register_button)
 
     layout.addLayout(button_layout)
-    login_window.show()
+    login_window.setLayout(layout)
+    login_window.exec()
+
+if __name__ == "__main__":
+    app = QApplication([])
+
+    open_login_window()
 
     app.exec()
