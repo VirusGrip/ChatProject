@@ -174,13 +174,16 @@ def save_file(file_name, file_data):
 @sio.event
 def file_received(data):
     """Обработчик для получения файлов."""
-    from_user = data['from']
-    file_name = data['file_name']
-    file_data = data['file_data']
+    print("Received data:", data)  # Вывод данных для проверки
+    from_user = data.get('from')
+    file_name = data.get('file_name')
+    file_data = data.get('file_data')
     
     if file_name:
         save_file(file_name, file_data)
         chat_box.append(f"{from_user}: Отправлен файл: {file_name}")
+    else:
+        chat_box.append(f"{from_user}: Получен файл, но имя файла не указано.")
 
 @sio.event
 def private_message(data):
