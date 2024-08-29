@@ -2,6 +2,7 @@ import os
 import socketio
 import requests
 from PySide6.QtWidgets import QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel, QLineEdit, QTextEdit, QListWidget, QMessageBox, QDialog, QListWidgetItem, QFileDialog
+from PySide6.QtWidgets import QMainWindow, QTextEdit, QVBoxLayout, QPushButton, QWidget, QFileDialog, QApplication
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QTextCursor, QColor, QFont, QBrush
 
@@ -156,13 +157,12 @@ def private_message(data):
     message = data.get('text')
 
     if recipient == current_username:
-        # Обработка отображения сообщения в приватном чате
         if sender in private_chat_windows:
-            private_chat_listbox = private_chat_windows[sender]['listbox']
-            private_chat_listbox.addItem(f"{sender}: {message}")
+            private_chat_text_edit = private_chat_windows[sender]['text_edit']
+            private_chat_text_edit.append(f"{sender}: {message}")
 
             # Обновляем ползунок прокрутки
-            scrollbar = private_chat_listbox.verticalScrollBar()
+            scrollbar = private_chat_text_edit.verticalScrollBar()
             scrollbar.setValue(scrollbar.maximum())
         else:
             # Если чат с этим пользователем не открыт, ничего не делаем
@@ -172,6 +172,7 @@ def private_message(data):
             unread_counts[sender] = unread_counts.get(sender, 0) + 1
             QTimer.singleShot(0, update_user_listbox)
 
+
 @sio.event
 def chat_history(data):
     """Обработчик для получения истории сообщений."""
@@ -179,6 +180,9 @@ def chat_history(data):
     messages = data.get('messages', [])
     chat_type = data.get('type', 'unknown')
     username = data.get('username', '')
+
+    print(f"chat_history: {chat_type}, {username}")
+    print(f"private_chat_windows: {private_chat_windows}")
 
     if chat_type == 'global':
         if not history_loaded:
@@ -192,15 +196,22 @@ def chat_history(data):
             history_loaded = True
     elif chat_type == 'private':
         if username in private_chat_windows:
-            private_chat_listbox = private_chat_windows[username]['listbox']
-            for msg in messages:
-                private_chat_listbox.addItem(f"{msg.get('sender', 'Unknown')}: {msg.get('text', '')}")
-            
-            # Обновляем ползунок прокрутки
-            scrollbar = private_chat_listbox.verticalScrollBar()
-            scrollbar.setValue(scrollbar.maximum())
+            private_chat_text_edit = private_chat_windows[username].get('text_edit')
+            if private_chat_text_edit is not None:
+                for msg in messages:
+                    private_chat_text_edit.append(f"{msg.get('sender', 'Unknown')}: {msg.get('text', '')}")
+                
+                # Обновляем ползунок прокрутки
+                scrollbar = private_chat_text_edit.verticalScrollBar()
+                scrollbar.setValue(scrollbar.maximum())
+            else:
+                print(f"Ключ 'text_edit' отсутствует в private_chat_windows для пользователя {username}")
+        else:
+            print(f"Чат с пользователем {username} не найден в private_chat_windows")
     else:
         print(f"Неизвестный тип чата: {chat_type}")
+
+
 
 def start_private_chat(username):
     """Открытие окна для личного чата с пользователем."""
@@ -215,16 +226,17 @@ def start_private_chat(username):
 
         layout = QVBoxLayout()
 
-        private_chat_listbox = QListWidget()
-        private_chat_listbox.setStyleSheet(f"""
+        # Используем QTextEdit для сообщений
+        private_chat_text_edit = QTextEdit()
+        private_chat_text_edit.setReadOnly(True)  # Устанавливаем режим только для чтения
+        private_chat_text_edit.setStyleSheet(f"""
             background-color: {ENTRY_BG_COLOR};
             border-radius: 10px;
             padding: 10px;
             color: {TEXT_COLOR};
+            border: 2px solid {BUTTON_COLOR};
         """)
-        private_chat_listbox.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
-        private_chat_listbox.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
-        layout.addWidget(private_chat_listbox)
+        layout.addWidget(private_chat_text_edit)
 
         private_message_entry = QTextEdit()
         private_message_entry.setStyleSheet(f"""
@@ -239,12 +251,12 @@ def start_private_chat(username):
         button_layout = QHBoxLayout()
         send_button = QPushButton("Отправить")
         send_button.setStyleSheet(f"background-color: {BUTTON_COLOR}; color: {TEXT_COLOR}; border-radius: 10px; padding: 10px;")
-        send_button.clicked.connect(lambda: send_private_message(username))
+        send_button.clicked.connect(lambda: send_private_message(username, private_chat_text_edit))
         button_layout.addWidget(send_button)
 
         attach_button = QPushButton("Прикрепить файл")
         attach_button.setStyleSheet(f"background-color: {BUTTON_COLOR}; color: {TEXT_COLOR}; border-radius: 10px; padding: 10px;")
-        attach_button.clicked.connect(lambda: attach_file(username))
+        attach_button.clicked.connect(lambda: attach_file(username, private_chat_text_edit))
         button_layout.addWidget(attach_button)
 
         layout.addLayout(button_layout)
@@ -257,7 +269,7 @@ def start_private_chat(username):
 
         private_chat_windows[username] = {
             'window': private_chat_window,
-            'listbox': private_chat_listbox,
+            'text_edit': private_chat_text_edit,
             'entry': private_message_entry
         }
 
@@ -267,7 +279,8 @@ def start_private_chat(username):
             unread_counts[username] = 0
             update_user_listbox()
 
-def send_private_message(username):
+
+def send_private_message(username, text_edit):
     """Отправка личного сообщения."""
     if username not in private_chat_windows:
         QMessageBox.warning(main_window, "Ошибка", f"Чат с {username} не открыт.")
@@ -279,11 +292,10 @@ def send_private_message(username):
 
     sio.emit('private_message', {'to': username, 'text': message, 'from': current_username})
 
-    private_chat_listbox = private_chat_windows[username]['listbox']
-    private_chat_listbox.addItem(f"{current_username}: {message}")
+    text_edit.append(f"{current_username}: {message}")
 
     # Обновляем ползунок прокрутки
-    scrollbar = private_chat_listbox.verticalScrollBar()
+    scrollbar = text_edit.verticalScrollBar()
     scrollbar.setValue(scrollbar.maximum())
 
     private_chat_windows[username]['entry'].clear()
@@ -292,7 +304,7 @@ def send_private_message(username):
         unread_counts[username] = unread_counts.get(username, 0)
         update_user_listbox()
 
-def attach_file(username):
+def attach_file(username, text_edit):
     """Выбор и отправка файла в личном чате."""
     if username not in private_chat_windows:
         QMessageBox.warning(main_window, "Ошибка", f"Чат с {username} не открыт.")
@@ -308,11 +320,10 @@ def attach_file(username):
                 'text': f"Файл: {os.path.basename(file_path)}",
                 'file': file_data
             })
-            private_chat_listbox = private_chat_windows[username]['listbox']
-            private_chat_listbox.addItem(f"{current_username}: Файл: {os.path.basename(file_path)}")
+            text_edit.append(f"{current_username}: Файл: {os.path.basename(file_path)}")
 
             # Обновляем ползунок прокрутки
-            scrollbar = private_chat_listbox.verticalScrollBar()
+            scrollbar = text_edit.verticalScrollBar()
             scrollbar.setValue(scrollbar.maximum())
 
 def send_message():

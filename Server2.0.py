@@ -1,6 +1,7 @@
-from flask import Flask, request, jsonify, session
-from flask_socketio import SocketIO, send, emit, join_room, leave_room
+from flask import Flask, request, jsonify, session, send_from_directory
+from flask_socketio import SocketIO, emit, join_room, leave_room, send
 from werkzeug.security import generate_password_hash, check_password_hash
+from werkzeug.utils import secure_filename
 import sqlite3
 import os
 import jwt
@@ -9,6 +10,12 @@ import base64
 app = Flask(__name__)
 app.secret_key = '12345678'
 socketio = SocketIO(app, manage_session=True)
+
+# Конфигурация загрузки файлов
+UPLOAD_FOLDER = 'uploads'
+HOST = 'http://10.1.3.187:12345'
+if not os.path.exists(UPLOAD_FOLDER):
+    os.makedirs(UPLOAD_FOLDER)
 
 DATABASE = 'chat.db'
 active_users = {}  # Словарь для хранения активных пользователей и их сессий
@@ -59,6 +66,10 @@ def init_db():
         conn.commit()
         conn.close()
 
+def get_db():
+    conn = sqlite3.connect(DATABASE)
+    return conn, conn.cursor()
+
 def get_chat_history(user_id, recipient_id):
     conn, cur = get_db()
     cur.execute("""
@@ -85,9 +96,46 @@ def get_global_chat_history():
     conn.close()
     return chat_history
 
-def get_db():
-    conn = sqlite3.connect(DATABASE)
-    return conn, conn.cursor()
+@app.route('/upload', methods=['POST'])
+def upload_file():
+    if 'file' not in request.files:
+        return jsonify({"message": "No file part"}), 400
+
+    file = request.files['file']
+    if file.filename == '':
+        return jsonify({"message": "No selected file"}), 400
+
+    filename = secure_filename(file.filename)
+    file_path = os.path.join(UPLOAD_FOLDER, filename)
+    file.save(file_path)
+
+    # Возвращаем URL файла
+    file_url = f"{HOST}/files/{filename}"
+
+    # Оповещаем через сокет, если нужно
+    recipient = request.form.get('to')  # Предполагаем, что получатель передан в форме
+    if recipient:
+        conn, cur = get_db()
+        cur.execute("SELECT id FROM users WHERE username = ?", (recipient,))
+        recipient_data = cur.fetchone()
+        if recipient_data:
+            recipient_id = recipient_data[0]
+            cur.execute("INSERT INTO files (user_id, recipient_id, file_path) VALUES (?, ?, ?)", 
+                        (session['user_id'], recipient_id, filename))  # Сохраняем только имя файла
+            conn.commit()
+
+            recipient_sid = next((sid for sid, name in active_users.items() if name == recipient), None)
+            if recipient_sid:
+                # Если получатель онлайн, отправляем уведомление через сокет
+                emit('file_received', {'from': session['username'], 'file_path': file_url}, room=recipient_sid)
+            # Если получатель оффлайн, файл будет доставлен при следующем подключении
+        conn.close()
+
+    return jsonify({"file_url": file_url}), 200
+
+@app.route('/files/<filename>')
+def uploaded_file(filename):
+    return send_from_directory(UPLOAD_FOLDER, filename)  # Исправлено: используем относительный путь к папке uploads
 
 @app.route('/register', methods=['POST'])
 def register():
@@ -172,18 +220,25 @@ def handle_connect():
 
             # Помечаем все непрочитанные сообщения как прочитанные
             cur.execute("UPDATE private_messages SET is_read = 1 WHERE recipient_id = ?", (session['user_id'],))
+            
+            # Проверяем наличие файлов для пользователя и отправляем уведомления
+            cur.execute("SELECT users.username, files.file_path FROM files JOIN users ON files.user_id = users.id WHERE recipient_id = ?", 
+                        (session['user_id'],))
+            unread_files = cur.fetchall()
+            for sender, file_path in unread_files:
+                emit('file_received', {'from': sender, 'file_path': f"{HOST}/files/{file_path}"})
+
             conn.commit()
             conn.close()
 
             emit('user_list', list(active_users.values()), broadcast=True)
-            emit('request_chat_history', {'type': 'global'}, room=request.sid)
-
+            print(f"Пользователь {session['username']} подключен, session ID: {request.sid}")
+        except jwt.ExpiredSignatureError:
+            emit('error', {'message': 'Токен истек'})
         except jwt.InvalidTokenError:
-            send("Ошибка: Неверный токен", to=request.sid)
-            return
+            emit('error', {'message': 'Неверный токен'})
     else:
-        send("Ошибка: Вы не авторизованы", to=request.sid)
-        return
+        emit('error', {'message': 'Необходим токен для подключения'})
 
 @socketio.on('upload_file')
 def handle_upload_file(data):
@@ -198,11 +253,11 @@ def handle_upload_file(data):
     # Decode the file
     file_content = base64.b64decode(file_data['content'])
     file_name = file_data['name']
-    file_path = f"uploads/{file_name}"
+    file_path = os.path.join(UPLOAD_FOLDER, file_name)  # Сохраняем файл в правильном месте
     
     # Save the file
-    if not os.path.exists('uploads'):
-        os.makedirs('uploads')
+    if not os.path.exists(UPLOAD_FOLDER):
+        os.makedirs(UPLOAD_FOLDER)
     
     with open(file_path, 'wb') as file:
         file.write(file_content)
@@ -214,27 +269,29 @@ def handle_upload_file(data):
 
     if recipient_data:
         recipient_id = recipient_data[0]
+        # Сохраняем информацию о файле в базе данных
         cur.execute("INSERT INTO files (user_id, recipient_id, file_path) VALUES (?, ?, ?)", 
-                    (user_id, recipient_id, file_path))
+                    (user_id, recipient_id, file_name))  # Сохраняем только имя файла
         conn.commit()
-        conn.close()
 
-        # Notify recipient
+        # Проверяем, активен ли получатель
         recipient_sid = next((sid for sid, name in active_users.items() if name == recipient), None)
         if recipient_sid:
-            emit('file_received', {'from': username, 'file_path': file_path}, room=recipient_sid)
+            # Если активен, отправляем уведомление
+            emit('file_received', {'from': username, 'file_path': f"{HOST}/files/{file_name}"}, room=recipient_sid)
+        # Если получатель не активен, уведомление будет отправлено при следующем подключении
     else:
         emit('error', {'message': 'Ошибка: Получатель не найден в базе данных'})
 
     conn.close()
-    
+
 @socketio.on('global_message')
 def handle_global_message(data):
     username = session.get('username')
     message_text = data.get('text')
 
     if username and message_text:
-        emit('global_message', {'sender': username, 'text': message_text}, room='global_room')  # Измените здесь
+        emit('global_message', {'sender': username, 'text': message_text}, room='global_room')
         # Сохраняем сообщение в базе данных
         user_id = session.get('user_id')
         if user_id:
@@ -372,7 +429,6 @@ def handle_disconnect():
             if room.startswith(f"room_{username}_") or room.endswith(f"_{username}"):
                 leave_room(room)
 
- 
 if __name__ == '__main__':
     init_db()
     socketio.run(app, host='10.1.3.187', port=12345)
