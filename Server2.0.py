@@ -13,7 +13,7 @@ socketio = SocketIO(app, manage_session=True)
 
 # Конфигурация загрузки файлов
 UPLOAD_FOLDER = 'uploads'
-HOST = '192.168.1.127:12345'
+HOST = '10.1.3.187:12345'
 if not os.path.exists(UPLOAD_FOLDER):
     os.makedirs(UPLOAD_FOLDER)
 
@@ -450,4 +450,4 @@ def handle_disconnect():
 
 if __name__ == '__main__':
     init_db()
-    socketio.run(app, host='192.168.1.127', port=12345)
+    socketio.run(app, host='10.1.3.187', port=12345)

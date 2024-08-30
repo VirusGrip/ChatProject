@@ -7,7 +7,7 @@ from PySide6.QtGui import QColor, QBrush, QTextCursor
 import webbrowser
 import urllib.parse
 
-HOST = 'http://192.168.1.127:12345'
+HOST = 'http://10.1.3.187:12345'
 sio = socketio.Client()
 token = None
 
@@ -54,6 +54,21 @@ def register():
 def create_file_link(file_name):
     """Создает ссылку для файла, корректно кодируя имя файла."""
     return f"{HOST}/uploads/{urllib.parse.quote(file_name)}"
+
+def send_private_file(recipient_username):
+    """Открывает диалог для выбора файла и отправляет его в приватный чат."""
+    file_path, _ = QFileDialog.getOpenFileName(main_window, "Выберите файл")
+    if file_path:
+        file_name = os.path.basename(file_path)
+        with open(file_path, 'rb') as file:
+            file_data = file.read()
+            # Отправляем файл на сервер в приватный чат
+            sio.emit('private_message', {'to': recipient_username, 'file_name': file_name, 'file_data': file_data, 'from': current_username})
+        
+        # Добавляем сообщение о загруженном файле в окно приватного чата
+        file_url = create_file_link(file_name)
+        private_chat_windows[recipient_username]['text_edit'].append(f"Вы отправили файл: <a href='{file_url}' style='color: {USER_COLOR}; text-decoration: none;'>{file_name}</a>")
+        private_chat_windows[recipient_username]['text_edit'].append("")  # Добавление пустой строки для форматирования
 
 def create_download_button(file_name, file_data):
     """Создает кнопку для загрузки файла и связывает ее с функцией обработки."""
@@ -231,28 +246,23 @@ def private_message(data):
     file_name = data.get('file_name')
     file_data = data.get('file_data')
 
-    print(f"Получено сообщение от {sender} для {recipient}")
-    if file_name:
-        print(f"Получен файл: {file_name}, размер: {len(file_data)} байт")
-    if message:
-        print(f"Сообщение: {message}")
-
     if recipient == current_username:
-        if recipient in private_chat_windows:
-            private_chat_text_edit = private_chat_windows[recipient]['text_edit']
+        if sender in private_chat_windows:
+            private_chat_text_edit = private_chat_windows[sender]['text_edit']
             
             if file_name and file_data:
-                # Обрабатываем файл: сохраняем его и добавляем сообщение
+                # Сохранение и добавление ссылки на файл в чат
                 save_file(file_name, file_data)
-                private_chat_text_edit.append(f"{sender}: Отправлен файл: {file_name}")
+                file_url = create_file_link(file_name)
+                private_chat_text_edit.append(f"{sender}: Отправлен файл: <a href='{file_url}' style='color: {USER_COLOR}; text-decoration: none;'>{file_name}</a>")
             else:
                 private_chat_text_edit.append(f"{sender}: {message}")
 
-            # Обновляем ползунок прокрутки
+            # Прокрутка чата вниз
             scrollbar = private_chat_text_edit.verticalScrollBar()
             scrollbar.setValue(scrollbar.maximum())
         else:
-            print(f"Чат с пользователем {recipient} не открыт")
+            print(f"Чат с пользователем {sender} не открыт")
 
         if sender != current_username:
             unread_counts[sender] = unread_counts.get(sender, 0) + 1
@@ -289,8 +299,6 @@ def chat_history(data):
         # Прокрутка вниз
         scrollbar = text_edit.verticalScrollBar()
         scrollbar.setValue(scrollbar.maximum())
-
-
 
 def send_message():
     """Отправка сообщения в общий чат или личный чат."""
@@ -334,8 +342,8 @@ def start_private_chat(username):
 
     layout = QVBoxLayout(private_chat_window)
 
-    text_edit = QTextEdit()
-    text_edit.setReadOnly(True)
+    text_edit = QTextBrowser()
+    text_edit.setOpenExternalLinks(True)  # Разрешает открытие ссылок во внешнем браузере
     text_edit.setStyleSheet(f"""
         background-color: {ENTRY_BG_COLOR};
         border-radius: 10px;
@@ -363,6 +371,11 @@ def start_private_chat(username):
     send_button.setStyleSheet(f"background-color: {BUTTON_COLOR}; color: {TEXT_COLOR}; border-radius: 10px; padding: 10px;")
     send_button.clicked.connect(lambda: send_private_message(username, private_message_entry))
     input_layout.addWidget(send_button)
+    
+    send_file_button = QPushButton("Отправить файл")
+    send_file_button.setStyleSheet(f"background-color: {BUTTON_COLOR}; color: {TEXT_COLOR}; border-radius: 10px; padding: 10px;")
+    send_file_button.clicked.connect(lambda: send_private_file(username))
+    input_layout.addWidget(send_file_button)
     
     layout.addWidget(input_frame)
 
