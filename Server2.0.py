@@ -28,7 +28,14 @@ def init_db():
             CREATE TABLE users (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 username TEXT UNIQUE NOT NULL,
-                password TEXT NOT NULL
+                password TEXT NOT NULL,
+                last_name TEXT,
+                first_name TEXT,
+                middle_name TEXT,
+                birth_date DATE,
+                work_email TEXT,
+                personal_email TEXT,
+                phone_number TEXT
             )
         ''')
         cursor.execute('''
@@ -155,19 +162,35 @@ def handle_file_received(data):
 @app.route('/register', methods=['POST'])
 def register():
     data = request.json
-    username = data['username']
+    required_fields = ['last_name', 'first_name', 'middle_name', 'password']
+    for field in required_fields:
+        if field not in data:
+            return jsonify({'message': f'Ошибка: отсутствует обязательное поле {field}'}), 400
+
+    username = f"{data['last_name']}{data['first_name'][0]}{data['middle_name'][0]}"
     password = data['password']
     hashed_password = generate_password_hash(password)
 
     conn, cur = get_db()
     try:
-        cur.execute("INSERT INTO users (username, password) VALUES (?, ?)", (username, hashed_password))
+        cur.execute('''
+            INSERT INTO users (
+                username, password, last_name, first_name, middle_name, birth_date,
+                work_email, personal_email, phone_number
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ''', (
+            username, hashed_password, data['last_name'], data['first_name'],
+            data['middle_name'], data.get('birth_date'), data.get('work_email'),
+            data.get('personal_email'), data.get('phone_number')
+        ))
         conn.commit()
         return jsonify({'message': 'Регистрация успешна!'}), 201
     except sqlite3.IntegrityError:
         return jsonify({'message': 'Пользователь с таким логином уже существует'}), 400
     finally:
         conn.close()
+
 
 @app.route('/login', methods=['POST'])
 def login():

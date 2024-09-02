@@ -1,7 +1,8 @@
 import os
+from flask import json
 import socketio
 import requests
-from PySide6.QtWidgets import QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel, QLineEdit, QTextEdit, QListWidget, QMessageBox, QDialog, QListWidgetItem, QFileDialog,  QTextBrowser, QGridLayout, QToolButton, QScrollArea
+from PySide6.QtWidgets import QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel, QLineEdit, QTextEdit, QListWidget, QMessageBox, QDialog, QListWidgetItem, QFileDialog,  QTextBrowser, QGridLayout, QToolButton, QScrollArea, QMenu
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QColor, QBrush, QTextCursor
 import webbrowser
@@ -36,15 +37,34 @@ USER_COLOR = "#0077ff"      # Цвет пользователей
 
 def register():
     """Обработчик регистрации нового пользователя."""
-    username = reg_username_entry.text()
+    last_name = reg_last_name_entry.text()
+    first_name = reg_first_name_entry.text()
+    middle_name = reg_middle_name_entry.text()
+    birth_date = reg_birth_date_entry.text()
+    work_email = reg_work_email_entry.text()
+    personal_email = reg_personal_email_entry.text()
+    phone_number = reg_phone_number_entry.text()
     password = reg_password_entry.text()
 
-    if not username or not password:
-        QMessageBox.critical(reg_window, "Ошибка", "Введите логин и пароль!")
+    if not (last_name and first_name and middle_name and birth_date and password):
+        QMessageBox.critical(reg_window, "Ошибка", "Пожалуйста, заполните все обязательные поля!")
         return
 
+    # Генерация логина
+    username = f"{last_name}{first_name[0]}{middle_name[0]}"
+
     try:
-        response = requests.post(f"{HOST}/register", json={'username': username, 'password': password})
+        response = requests.post(f"{HOST}/register", json={
+            'username': username,
+            'password': password,
+            'last_name': last_name,
+            'first_name': first_name,
+            'middle_name': middle_name,
+            'birth_date': birth_date,
+            'work_email': work_email,
+            'personal_email': personal_email,
+            'phone_number': phone_number
+        })
         if response.status_code == 201:
             QMessageBox.information(reg_window, "Успех", "Регистрация прошла успешно!")
             reg_window.accept()
@@ -52,6 +72,7 @@ def register():
             QMessageBox.critical(reg_window, "Ошибка", response.json().get('message', 'Неизвестная ошибка'))
     except Exception as e:
         QMessageBox.critical(reg_window, "Ошибка", str(e))
+
 
 def create_file_link(file_name):
     """Создает ссылку для файла, корректно кодируя имя файла."""
@@ -164,7 +185,7 @@ def send_file(recipient_username):
 
 def open_registration_window():
     """Открывает окно регистрации."""
-    global reg_window, reg_username_entry, reg_password_entry
+    global reg_window, reg_last_name_entry, reg_first_name_entry, reg_middle_name_entry, reg_birth_date_entry, reg_work_email_entry, reg_personal_email_entry, reg_phone_number_entry, reg_password_entry
 
     reg_window = QDialog(login_window)
     reg_window.setWindowTitle("Регистрация")
@@ -172,13 +193,61 @@ def open_registration_window():
 
     layout = QVBoxLayout()
 
-    username_label = QLabel("Логин", reg_window)
-    username_label.setStyleSheet(f"color: {HEADING_COLOR}; font-weight: bold;")
-    layout.addWidget(username_label)
+    last_name_label = QLabel("Фамилия", reg_window)
+    last_name_label.setStyleSheet(f"color: {HEADING_COLOR}; font-weight: bold;")
+    layout.addWidget(last_name_label)
 
-    reg_username_entry = QLineEdit(reg_window)
-    reg_username_entry.setStyleSheet(f"background-color: {ENTRY_BG_COLOR}; border-radius: 10px; padding: 10px; color: {TEXT_COLOR};")
-    layout.addWidget(reg_username_entry)
+    reg_last_name_entry = QLineEdit(reg_window)
+    reg_last_name_entry.setStyleSheet(f"background-color: {ENTRY_BG_COLOR}; border-radius: 10px; padding: 10px; color: {TEXT_COLOR};")
+    layout.addWidget(reg_last_name_entry)
+
+    first_name_label = QLabel("Имя", reg_window)
+    first_name_label.setStyleSheet(f"color: {HEADING_COLOR}; font-weight: bold;")
+    layout.addWidget(first_name_label)
+
+    reg_first_name_entry = QLineEdit(reg_window)
+    reg_first_name_entry.setStyleSheet(f"background-color: {ENTRY_BG_COLOR}; border-radius: 10px; padding: 10px; color: {TEXT_COLOR};")
+    layout.addWidget(reg_first_name_entry)
+
+    middle_name_label = QLabel("Отчество", reg_window)
+    middle_name_label.setStyleSheet(f"color: {HEADING_COLOR}; font-weight: bold;")
+    layout.addWidget(middle_name_label)
+
+    reg_middle_name_entry = QLineEdit(reg_window)
+    reg_middle_name_entry.setStyleSheet(f"background-color: {ENTRY_BG_COLOR}; border-radius: 10px; padding: 10px; color: {TEXT_COLOR};")
+    layout.addWidget(reg_middle_name_entry)
+
+    birth_date_label = QLabel("Дата рождения", reg_window)
+    birth_date_label.setStyleSheet(f"color: {HEADING_COLOR}; font-weight: bold;")
+    layout.addWidget(birth_date_label)
+
+    reg_birth_date_entry = QLineEdit(reg_window)
+    reg_birth_date_entry.setStyleSheet(f"background-color: {ENTRY_BG_COLOR}; border-radius: 10px; padding: 10px; color: {TEXT_COLOR};")
+    layout.addWidget(reg_birth_date_entry)
+
+    work_email_label = QLabel("Рабочая электронная почта", reg_window)
+    work_email_label.setStyleSheet(f"color: {HEADING_COLOR}; font-weight: bold;")
+    layout.addWidget(work_email_label)
+
+    reg_work_email_entry = QLineEdit(reg_window)
+    reg_work_email_entry.setStyleSheet(f"background-color: {ENTRY_BG_COLOR}; border-radius: 10px; padding: 10px; color: {TEXT_COLOR};")
+    layout.addWidget(reg_work_email_entry)
+
+    personal_email_label = QLabel("Личная электронная почта (по желанию)", reg_window)
+    personal_email_label.setStyleSheet(f"color: {HEADING_COLOR}; font-weight: bold;")
+    layout.addWidget(personal_email_label)
+
+    reg_personal_email_entry = QLineEdit(reg_window)
+    reg_personal_email_entry.setStyleSheet(f"background-color: {ENTRY_BG_COLOR}; border-radius: 10px; padding: 10px; color: {TEXT_COLOR};")
+    layout.addWidget(reg_personal_email_entry)
+
+    phone_number_label = QLabel("Номер телефона", reg_window)
+    phone_number_label.setStyleSheet(f"color: {HEADING_COLOR}; font-weight: bold;")
+    layout.addWidget(phone_number_label)
+
+    reg_phone_number_entry = QLineEdit(reg_window)
+    reg_phone_number_entry.setStyleSheet(f"background-color: {ENTRY_BG_COLOR}; border-radius: 10px; padding: 10px; color: {TEXT_COLOR};")
+    layout.addWidget(reg_phone_number_entry)
 
     password_label = QLabel("Пароль", reg_window)
     password_label.setStyleSheet(f"color: {HEADING_COLOR}; font-weight: bold;")
@@ -203,6 +272,7 @@ def open_registration_window():
     layout.addLayout(button_layout)
     reg_window.setLayout(layout)
     reg_window.exec()
+
 
 def login():
     """Обработчик входа пользователя."""
@@ -246,8 +316,11 @@ def all_users(users):
     """Обработчик для получения списка всех пользователей."""
     global all_users
     print(f"Received all users: {users}")
-    all_users = users
-    update_user_listbox()
+    if isinstance(users, list) and all(isinstance(user, str) for user in users):
+        all_users = users
+        update_user_listbox()
+    else:
+        print("Unexpected data format:", users)
 
 @sio.event
 def global_message(data):
@@ -387,19 +460,56 @@ def send_message():
         # Обновляем ползунок прокрутки
         scrollbar = chat_box.verticalScrollBar()
         scrollbar.setValue(scrollbar.maximum())
+def show_user_profile(username):
+    """Показывает информацию о пользователе в новом окне."""
+    # Ищем данные о пользователе
+    user_data = next((user for user in all_users if user['username'] == username), None)
+    if user_data:
+        profile_window = QDialog(main_window)
+        profile_window.setWindowTitle(f"Профиль пользователя: {username}")
+        layout = QVBoxLayout(profile_window)
+
+        for key in ['last_name', 'first_name', 'middle_name', 'birth_date', 'work_email', 'personal_email', 'phone_number']:
+            value = user_data.get(key, 'Не указано')
+            layout.addWidget(QLabel(f"{key.replace('_', ' ').title()}: {value}"))
+
+        profile_window.exec()
 
 def update_user_listbox():
-    """Обновление списка пользователей."""
+    """Обновление списка пользователей с контекстным меню."""
     global user_listbox, all_users, unread_counts
 
     user_listbox.clear()
-    for user in all_users:
-        if user == current_username:
+
+    for username in all_users:
+        if username == current_username:
             continue
-        item_text = f"{user} ({unread_counts.get(user, 0)} нов.)"
+        item_text = f"{username} ({unread_counts.get(username, 0)} нов.)"
         item = QListWidgetItem(item_text)
         item.setForeground(QBrush(QColor(USER_COLOR)))
         user_listbox.addItem(item)
+
+    # Добавляем контекстное меню
+    user_listbox.setContextMenuPolicy(Qt.CustomContextMenu)
+    user_listbox.customContextMenuRequested.connect(on_user_listbox_custom_context_menu)
+
+def on_user_listbox_custom_context_menu(pos):
+    """Отображает контекстное меню при нажатии правой кнопкой мыши на элемент списка пользователей."""
+    global user_listbox
+
+    index = user_listbox.indexAt(pos)
+    if not index.isValid():
+        return
+
+    username = all_users[index.row()]['username']
+
+    menu = QMenu()
+    profile_action = menu.addAction("Просмотреть профиль")
+    action = menu.exec(user_listbox.viewport().mapToGlobal(pos))
+
+    if action == profile_action:
+        show_user_profile(username)
+
 
 def start_private_chat(username):
     """Открытие личного чата с пользователем."""
