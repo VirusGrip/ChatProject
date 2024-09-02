@@ -1,11 +1,13 @@
 import os
 import socketio
 import requests
-from PySide6.QtWidgets import QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel, QLineEdit, QTextEdit, QListWidget, QMessageBox, QDialog, QListWidgetItem, QFileDialog,  QTextBrowser
+from PySide6.QtWidgets import QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel, QLineEdit, QTextEdit, QListWidget, QMessageBox, QDialog, QListWidgetItem, QFileDialog,  QTextBrowser, QGridLayout, QToolButton, QScrollArea
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QColor, QBrush, QTextCursor
 import webbrowser
 import urllib.parse
+from functools import partial
+
 
 HOST = 'http://10.1.3.187:12345'
 sio = socketio.Client()
@@ -54,6 +56,73 @@ def register():
 def create_file_link(file_name):
     """Создает ссылку для файла, корректно кодируя имя файла."""
     return f"{HOST}/uploads/{urllib.parse.quote(file_name)}"
+
+def open_emoji_picker(target_widget=None):
+    print(f"Тип виджета: {type(target_widget)}")  # Добавьте эту строку для отладки
+    if not isinstance(target_widget, (QTextEdit, QTextBrowser)):
+        print("Ошибка: target_widget не является QTextEdit или QTextBrowser")
+        return
+    emoji_window = QDialog(main_window)
+    emoji_window.setWindowTitle("Выбор эмодзи")
+
+    # Устанавливаем светло-голубой фон для окна и фиксированный размер
+    emoji_window.setStyleSheet("background-color: #ADD8E6;")  # Светло-голубой цвет
+    emoji_window.setFixedSize(400, 300)  # Устанавливаем размер окна
+
+    scroll_area = QScrollArea(emoji_window)
+    scroll_area.setWidgetResizable(True)
+
+    emoji_container = QWidget()
+    layout = QGridLayout(emoji_container)
+
+    # Ограниченный набор эмодзи (как в ВКонтакте)
+    standard_emojis = [
+        "😀", "😁", "😂", "🤣", "😃", "😄", "😅", "😆", "😉", "😊",
+        "😋", "😎", "😍", "😘", "😗", "😙", "😚", "🙂", "🤗", "🤔",
+        "😐", "😑", "😶", "🙄", "😏", "😣", "😥", "😮", "🤐", "👽",
+        "😯", "😪", "😫", "😴", "😌", "😛", "😜", "😝", "🤤", "😒",
+        "😓", "😔", "😕", "🙃", "🤑", "😲", "☹️", "🙁", "😖", "😞",
+        "😟", "😤", "😢", "😭", "😦", "😧", "😨", "😩", "😰", "😱",
+        "😳", "😵", "😡", "😠", "😷", "🤒", "🤕", "🤢", "👻", "💀",
+        "🤧", "😇", "🤠", "🤡", "🤥", "🤓", "😈", "👿", "👹", "👺",  
+        "🤖", "💩", "😺", "😸", "😹", "😻", "😼", "😽", "🙀", "😿",
+        "😾", "🙈", "🙉", "🙊", "🐵", "🐶", "🐱", "🐭", "🐹", "🐰",
+        "🦊", "🐻", "🐼", "🐨", "🐯", "🦁", "🐮", "🐷", "🐽", "🐸",
+        "🐵", "🐔", "🐧", "🐦", "🐤", "🐣", "🐥", "🦆", "🦅", "🦉"
+    ]
+
+    row, col = 0, 0
+    for symbol in standard_emojis:
+        button = QToolButton()
+        button.setText(symbol)
+
+        # Уменьшаем расстояние между кнопками
+        button.setStyleSheet("margin: 2px; padding: 5px; font-size: 16px;")  # Уменьшенные отступы и шрифт
+
+        # Используем partial для передачи правильных аргументов
+        button.clicked.connect(partial(insert_emoji, symbol, target_widget))
+        layout.addWidget(button, row, col)
+        col += 1
+        if col > 4:  # Ограничиваем количество кнопок в строке
+            col = 0
+            row += 1
+
+    emoji_container.setLayout(layout)
+    scroll_area.setWidget(emoji_container)
+
+    main_layout = QVBoxLayout(emoji_window)
+    main_layout.addWidget(scroll_area)
+    emoji_window.setLayout(main_layout)
+
+    emoji_window.exec()
+
+def insert_emoji(symbol, target_widget):
+    """Вставляет выбранный эмодзи в текстовое поле."""
+    if isinstance(target_widget, QTextEdit) or isinstance(target_widget, QTextBrowser):
+        current_cursor = target_widget.textCursor()
+        current_cursor.insertText(symbol)
+    else:
+        print("Ошибка: target_widget не является QTextEdit или QTextBrowser")
 
 def send_private_file(recipient_username):
     """Открывает диалог для выбора файла и отправляет его в приватный чат."""
@@ -186,11 +255,14 @@ def global_message(data):
     if 'text' in data and 'sender' in data:
         text = data['text']
         sender = data['sender']
-        chat_box.append(f"{sender}: {text}")
 
-        # Обновляем ползунок прокрутки
-        scrollbar = chat_box.verticalScrollBar()
-        scrollbar.setValue(scrollbar.maximum())
+        # Добавляем сообщение только если оно не от текущего пользователя
+        if sender != current_username:
+            chat_box.append(f"{sender}: {text}")
+
+            # Обновляем ползунок прокрутки
+            scrollbar = chat_box.verticalScrollBar()
+            scrollbar.setValue(scrollbar.maximum())
 
 def save_file(file_name, file_data):
     """Сохранение полученного файла на диск."""
@@ -256,7 +328,8 @@ def private_message(data):
                 file_url = create_file_link(file_name)
                 private_chat_text_edit.append(f"{sender}: Отправлен файл: <a href='{file_url}' style='color: {USER_COLOR}; text-decoration: none;'>{file_name}</a>")
             else:
-                private_chat_text_edit.append(f"{sender}: {message}")
+                if sender != current_username:  # Не отображаем сообщения от текущего пользователя
+                    private_chat_text_edit.append(f"{sender}: {message}")
 
             # Прокрутка чата вниз
             scrollbar = private_chat_text_edit.verticalScrollBar()
@@ -267,6 +340,7 @@ def private_message(data):
         if sender != current_username:
             unread_counts[sender] = unread_counts.get(sender, 0) + 1
             QTimer.singleShot(0, update_user_listbox)
+
 
 @sio.event
 def chat_history(data):
@@ -377,6 +451,11 @@ def start_private_chat(username):
     send_file_button.clicked.connect(lambda: send_private_file(username))
     input_layout.addWidget(send_file_button)
     
+    emoji_button = QPushButton("😀")
+    emoji_button.setStyleSheet(f"background-color: {BUTTON_COLOR}; color: {TEXT_COLOR}; border-radius: 10px; padding: 10px;")
+    emoji_button.clicked.connect(lambda: open_emoji_picker(private_message_entry))
+    input_layout.addWidget(emoji_button)
+
     layout.addWidget(input_frame)
 
     private_chat_windows[username] = {
@@ -444,9 +523,10 @@ def setup_main_window():
     chat_box.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
     chat_layout.addWidget(chat_box)
 
+    # Создаем и настраиваем input_frame и его виджеты
     input_frame = QWidget()
     input_layout = QHBoxLayout(input_frame)
-    
+
     message_entry = QTextEdit()
     message_entry.setStyleSheet(f"""
         background-color: {ENTRY_BG_COLOR};
@@ -457,17 +537,22 @@ def setup_main_window():
         border-top: 3px solid {BUTTON_HOVER_COLOR};
     """)
     input_layout.addWidget(message_entry)
-    
+
     send_button = QPushButton("Отправить")
     send_button.setStyleSheet(f"background-color: {BUTTON_COLOR}; color: {TEXT_COLOR}; border-radius: 10px; padding: 10px;")
     send_button.clicked.connect(send_message)
     input_layout.addWidget(send_button)
-    
+
     send_file_button = QPushButton("Отправить файл")
     send_file_button.setStyleSheet(f"background-color: {BUTTON_COLOR}; color: {TEXT_COLOR}; border-radius: 10px; padding: 10px;")
     send_file_button.clicked.connect(lambda: send_file(current_username))
     input_layout.addWidget(send_file_button)
-    
+
+    emoji_button = QPushButton("😀")
+    emoji_button.setStyleSheet(f"background-color: {BUTTON_COLOR}; color: {TEXT_COLOR}; border-radius: 10px; padding: 10px;")
+    emoji_button.clicked.connect(lambda: open_emoji_picker(message_entry))  # Передаем текстовое поле чата
+    input_layout.addWidget(emoji_button)
+
     chat_layout.addWidget(input_frame)
     layout.addWidget(chat_frame)
 
