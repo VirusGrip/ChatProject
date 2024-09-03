@@ -212,12 +212,25 @@ def login():
 @app.route('/all_users', methods=['GET'])
 def get_all_users():
     conn, cur = get_db()
-    cur.execute("SELECT id, username, last_name, first_name, middle_name FROM users")
+    cur.execute("SELECT id, username, last_name, first_name, middle_name, birth_date, work_email, personal_email, phone_number FROM users")
     users = cur.fetchall()
     conn.close()
 
-    user_dict = {user[1]: {'id': user[0], 'last_name': user[2], 'first_name': user[3], 'middle_name': user[4]} for user in users}
+    user_dict = {
+        user[1]: {
+            'id': user[0],
+            'last_name': user[2],
+            'first_name': user[3],
+            'middle_name': user[4],
+            'birth_date': user[5],
+            'work_email': user[6],
+            'personal_email': user[7],
+            'phone_number': user[8]
+        } 
+        for user in users
+    }
     return jsonify({'users': user_dict}), 200
+
 
 @socketio.on('connect')
 def handle_connect():
@@ -233,9 +246,21 @@ def handle_connect():
 
             conn, cur = get_db()
             # Получаем словарь всех пользователей
-            cur.execute("SELECT id, username, last_name, first_name, middle_name FROM users")
+            cur.execute("SELECT id, username, last_name, first_name, middle_name, birth_date, work_email, personal_email, phone_number FROM users")
             users = cur.fetchall()
-            user_dict = {user[1]: {'id': user[0], 'last_name': user[2], 'first_name': user[3], 'middle_name': user[4]} for user in users}
+            user_dict = {
+                user[1]: {
+                    'id': user[0],
+                    'last_name': user[2],
+                    'first_name': user[3],
+                    'middle_name': user[4],
+                    'birth_date': user[5],
+                    'work_email': user[6],
+                    'personal_email': user[7],
+                    'phone_number': user[8]
+                } 
+                for user in users
+            }
 
             emit('all_users', user_dict, to=request.sid)
 

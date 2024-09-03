@@ -327,7 +327,6 @@ def all_users(users):
         update_user_listbox()
     else:
         print("Unexpected data format:", users)
-
 @sio.event
 def global_message(data):
     """Обработчик для получения сообщений из общего чата."""
@@ -578,7 +577,6 @@ def open_user_profile(username):
     profile_window.exec_()
 
 def start_private_chat(username):
-    """Открытие личного чата с пользователем."""
     global private_chat_windows
 
     if username in private_chat_windows:
@@ -593,7 +591,7 @@ def start_private_chat(username):
     layout = QVBoxLayout(private_chat_window)
 
     text_edit = QTextBrowser()
-    text_edit.setOpenExternalLinks(True)  # Разрешает открытие ссылок во внешнем браузере
+    text_edit.setOpenExternalLinks(True)  # Позволяет открывать ссылки во внешнем браузере
     text_edit.setStyleSheet(f"""
         background-color: {ENTRY_BG_COLOR};
         border-radius: 10px;
@@ -631,6 +629,12 @@ def start_private_chat(username):
     emoji_button.setStyleSheet(f"background-color: {BUTTON_COLOR}; color: {TEXT_COLOR}; border-radius: 10px; padding: 10px;")
     emoji_button.clicked.connect(lambda: open_emoji_picker(private_message_entry))
     input_layout.addWidget(emoji_button)
+
+    # Добавляем кнопку "Просмотр профиля"
+    view_profile_button = QPushButton("Просмотр профиля")
+    view_profile_button.setStyleSheet(f"background-color: {BUTTON_COLOR}; color: {TEXT_COLOR}; border-radius: 10px; padding: 10px;")
+    view_profile_button.clicked.connect(lambda: open_user_profile(username))  # Открываем профиль пользователя
+    input_layout.addWidget(view_profile_button)
 
     layout.addWidget(input_frame)
 
