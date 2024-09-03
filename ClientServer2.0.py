@@ -399,13 +399,13 @@ def handle_link_click(event):
 
 @sio.event
 def private_message(data):
-    """Обработчик для получения личных сообщений."""
     sender = data.get('from')
     recipient = data.get('to')
     message = data.get('text')
     file_name = data.get('file_name')
     file_data = data.get('file_data')
 
+    # Если сообщение предназначено текущему пользователю
     if recipient == current_username:
         if sender in private_chat_windows:
             private_chat_text_edit = private_chat_windows[sender]['text_edit']
@@ -415,20 +415,21 @@ def private_message(data):
                 file_url = create_file_link(file_name)
                 private_chat_text_edit.append(f"{sender}: Отправлен файл: <a href='{file_url}' style='color: {USER_COLOR}; text-decoration: none;'>{file_name}</a>")
             else:
-                if sender != current_username:  # Не отображаем сообщения от текущего пользователя
-                    private_chat_text_edit.append(f"{sender}: {message}")
+                private_chat_text_edit.append(f"{sender}: {message}")
 
             scrollbar = private_chat_text_edit.verticalScrollBar()
             scrollbar.setStyleSheet("")  # Сброс всех кастомных стилей
-
         else:
             print(f"Чат с пользователем {sender} не открыт")
 
+        # Обновление счетчика непрочитанных сообщений
         if sender != current_username:
-            unread_counts[sender] = unread_counts.get(sender, 0) + 1
-            
-            # Обновляем список пользователей после получения сообщения
+            unread_messages[sender] = unread_messages.get(sender, 0) + 1
             update_user_listbox()
+
+    # Отправитель не должен видеть свои сообщения как непрочитанные
+    if recipient != current_username:
+        return
 
 @sio.event
 def message_received(data):
@@ -649,13 +650,14 @@ def open_user_profile(username):
     profile_window.exec_()
 
 def start_private_chat(username):
-    global private_chat_windows
+    global private_chat_windows, unread_messages
 
     # Если окно уже существует, просто делаем его видимым
     if username in private_chat_windows:
         private_chat_windows[username]['window'].show()
         private_chat_windows[username]['window'].raise_()
         private_chat_windows[username]['window'].activateWindow()
+
         # Сброс количества непрочитанных сообщений
         unread_messages[username] = 0
         update_user_listbox()
@@ -669,7 +671,7 @@ def start_private_chat(username):
     layout = QVBoxLayout(private_chat_window)
 
     text_edit = QTextBrowser()
-    text_edit.setOpenExternalLinks(True)  # Позволяет открывать ссылки во внешнем браузере
+    text_edit.setOpenExternalLinks(True)
     text_edit.setStyleSheet(f"""
         background-color: {ENTRY_BG_COLOR};
         border-radius: 10px;
@@ -708,15 +710,8 @@ def start_private_chat(username):
     emoji_button.clicked.connect(lambda: open_emoji_picker(private_message_entry))
     input_layout.addWidget(emoji_button)
 
-    # Добавляем кнопку "Просмотр профиля"
-    view_profile_button = QPushButton("Просмотр профиля")
-    view_profile_button.setStyleSheet(f"background-color: {BUTTON_COLOR}; color: {TEXT_COLOR}; border-radius: 10px; padding: 10px;")
-    view_profile_button.clicked.connect(lambda: open_user_profile(username))
-    input_layout.addWidget(view_profile_button)
-
     layout.addWidget(input_frame)
 
-    # Добавляем информацию об окне в глобальный словарь
     private_chat_windows[username] = {
         'window': private_chat_window,
         'text_edit': text_edit,
@@ -724,6 +719,10 @@ def start_private_chat(username):
     }
 
     private_chat_window.show()
+
+    # Сброс количества непрочитанных сообщений
+    unread_messages[username] = 0
+    update_user_listbox()
 
     # Запрашиваем историю чата
     sio.emit('request_chat_history', {'type': 'private', 'username': username})
