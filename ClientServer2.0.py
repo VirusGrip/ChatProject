@@ -411,7 +411,8 @@ def private_message(data):
 
             # Прокрутка чата вниз
             scrollbar = private_chat_text_edit.verticalScrollBar()
-            scrollbar.setValue(scrollbar.maximum())
+            scrollbar.setStyleSheet("")  # Сброс всех кастомных стилей
+
         else:
             print(f"Чат с пользователем {sender} не открыт")
 
@@ -548,7 +549,7 @@ def on_user_right_click(pos):
 
 def open_user_profile(username):
     """Открывает окно с информацией о пользователе."""
-    # Здесь мы должны получить информацию о пользователе из базы данных
+    # Получаем информацию о пользователе
     user_data = next((user for user in all_users if user['username'] == username), None)
     
     if not user_data:
@@ -561,18 +562,50 @@ def open_user_profile(username):
     
     layout = QVBoxLayout()
 
-    for key, label in {
-        'last_name': 'Фамилия',
-        'first_name': 'Имя',
-        'middle_name': 'Отчество',
-        'birth_date': 'Дата рождения',
-        'work_email': 'Рабочая почта',
-        'personal_email': 'Личная почта',
-        'phone_number': 'Телефон'
-    }.items():
-        value = user_data.get(key, 'Не указано')
-        layout.addWidget(QLabel(f"{label}: {value}"))
-    
+    profile_text_browser = QTextBrowser()
+    profile_text_browser.setOpenExternalLinks(True)  # Позволяет открывать ссылки во внешнем браузере
+    profile_text_browser.setTextInteractionFlags(Qt.TextBrowserInteraction)  # Позволяет взаимодействие с текстом (выделение и копирование)
+    profile_text_browser.setStyleSheet(f"""
+        background-color: {ENTRY_BG_COLOR};
+        border-radius: 10px;
+        padding: 10px;
+        color: {TEXT_COLOR};
+        border: 2px solid {BUTTON_COLOR};
+    """)
+
+    # Формируем HTML-код для QTextBrowser
+    profile_text = f"""
+    <html>
+    <head>
+        <style>
+            .profile-label {{
+                font-weight: bold;
+                color: {BUTTON_COLOR};
+            }}
+            .profile-value {{
+                color: {TEXT_COLOR};
+            }}
+            p {{
+                margin: 2px 0; /* Уменьшение расстояния между строками */
+                line-height: 1.2; /* Уменьшение высоты строки */
+            }}
+        </style>
+    </head>
+    <body>
+        <p><span class="profile-label">Фамилия:</span> <span class="profile-value">{user_data.get('last_name', 'Не указано')}</span></p>
+        <p><span class="profile-label">Имя:</span> <span class="profile-value">{user_data.get('first_name', 'Не указано')}</span></p>
+        <p><span class="profile-label">Отчество:</span> <span class="profile-value">{user_data.get('middle_name', 'Не указано')}</span></p>
+        <p><span class="profile-label">Дата рождения:</span> <span class="profile-value">{user_data.get('birth_date', 'Не указано')}</span></p>
+        <p><span class="profile-label">Рабочий email:</span> <span class="profile-value">{user_data.get('work_email', 'Не указано')}</span></p>
+        <p><span class="profile-label">Личный email:</span> <span class="profile-value">{user_data.get('personal_email', 'Не указано')}</span></p>
+        <p><span class="profile-label">Номер телефона:</span> <span class="profile-value">{user_data.get('phone_number', 'Не указано')}</span></p>
+    </body>
+    </html>
+    """
+
+    profile_text_browser.setHtml(profile_text)
+
+    layout.addWidget(profile_text_browser)
     profile_window.setLayout(layout)
     profile_window.exec_()
 
