@@ -23,9 +23,8 @@ chat_box = None
 message_entry = None
 all_users = []  # Список всех зарегистрированных пользователей
 private_chat_windows = {}  # Словарь для хранения ссылок на окна приватных чатов
-unread_counts = {}  # Словарь для хранения количества непрочитанных сообщений
 history_loaded = False  # Флаг для отслеживания загрузки истории сообщений
-
+unread_messages = {} 
 # Цвета и шрифты
 BG_COLOR = "#1e1e1e"        # Фоновый цвет
 TEXT_COLOR = "#e0e0e0"      # Цвет текста
@@ -315,8 +314,7 @@ def disconnect():
 
 @sio.event
 def all_users(users):
-    """Обработчик для получения списка всех пользователей."""
-    global all_users
+    global all_users, unread_messages
     print(f"Received all users: {users}")
     
     if isinstance(users, dict):
@@ -324,9 +322,21 @@ def all_users(users):
             {'username': username, **details}
             for username, details in users.items()
         ]
+        # Обновляем словарь unread_messages, если это нужно
+        unread_messages = {user['username']: unread_messages.get(user['username'], 0) for user in all_users}
         update_user_listbox()
     else:
         print("Unexpected data format:", users)
+
+@sio.event
+def unread_counts(data):
+    global unread_messages
+    if isinstance(data, dict):
+        unread_messages.update(data)
+    else:
+        print("Unexpected data format:", data)
+    update_user_listbox()
+
 @sio.event
 def global_message(data):
     """Обработчик для получения сообщений из общего чата."""
@@ -401,7 +411,6 @@ def private_message(data):
             private_chat_text_edit = private_chat_windows[sender]['text_edit']
             
             if file_name and file_data:
-                # Сохранение и добавление ссылки на файл в чат
                 save_file(file_name, file_data)
                 file_url = create_file_link(file_name)
                 private_chat_text_edit.append(f"{sender}: Отправлен файл: <a href='{file_url}' style='color: {USER_COLOR}; text-decoration: none;'>{file_name}</a>")
@@ -409,7 +418,6 @@ def private_message(data):
                 if sender != current_username:  # Не отображаем сообщения от текущего пользователя
                     private_chat_text_edit.append(f"{sender}: {message}")
 
-            # Прокрутка чата вниз
             scrollbar = private_chat_text_edit.verticalScrollBar()
             scrollbar.setStyleSheet("")  # Сброс всех кастомных стилей
 
@@ -418,8 +426,28 @@ def private_message(data):
 
         if sender != current_username:
             unread_counts[sender] = unread_counts.get(sender, 0) + 1
-            QTimer.singleShot(0, update_user_listbox)
+            
+            # Обновляем список пользователей после получения сообщения
+            update_user_listbox()
 
+@sio.event
+def message_received(data):
+    sender = data.get('from')
+    text = data.get('text')
+    chat_type = data.get('type')
+
+    if chat_type == 'private':
+        unread_messages[sender] = unread_messages.get(sender, 0) + 1
+        update_user_listbox()  # Обновляем список пользователей
+
+    if chat_type == 'global':
+        chat_box.append(f"{sender}: {text}")
+    elif sender in private_chat_windows:
+        private_chat_windows[sender]['text_edit'].append(f"{sender}: {text}")
+        if private_chat_windows[sender]['window'].isVisible():
+            unread_messages[sender] = 0
+    else:
+        update_user_listbox()
 
 @sio.event
 def chat_history(data):
@@ -487,7 +515,7 @@ def show_user_profile(username):
 
 def update_user_listbox():
     """Обновление списка пользователей с контекстным меню."""
-    global user_listbox, all_users, unread_counts
+    global user_listbox, all_users, unread_messages
 
     user_listbox.clear()
 
@@ -496,9 +524,20 @@ def update_user_listbox():
         for user in all_users:
             username = user.get('username')
             if username and username != current_username:
-                item_text = f"{username} ({unread_counts.get(username, 0)} нов.)"
+                item_text = username
                 item = QListWidgetItem(item_text)
-                item.setForeground(QBrush(QColor(USER_COLOR)))
+
+                # Если есть непрочитанные сообщения, добавляем значок "⚠️"
+                if username in unread_messages and unread_messages[username] > 0:
+                    item_text += f" ⚠️ ({unread_messages[username]})"
+                    item.setText(item_text)
+                    item.setForeground(QBrush(QColor("red")))  # Красный цвет текста
+                    font = item.font()
+                    font.setBold(True)  # Жирный шрифт
+                    item.setFont(font)
+                else:
+                    item.setForeground(QBrush(QColor(USER_COLOR)))  # Обычный цвет текста
+
                 user_listbox.addItem(item)
     else:
         print("Неверный формат данных о пользователях:", all_users)
@@ -612,11 +651,17 @@ def open_user_profile(username):
 def start_private_chat(username):
     global private_chat_windows
 
+    # Если окно уже существует, просто делаем его видимым
     if username in private_chat_windows:
+        private_chat_windows[username]['window'].show()
         private_chat_windows[username]['window'].raise_()
         private_chat_windows[username]['window'].activateWindow()
+        # Сброс количества непрочитанных сообщений
+        unread_messages[username] = 0
+        update_user_listbox()
         return
 
+    # Создаем новое окно чата
     private_chat_window = QWidget()
     private_chat_window.setWindowTitle(f"Личный чат с {username}")
     private_chat_window.setStyleSheet(f"background-color: {BG_COLOR};")
@@ -641,7 +686,7 @@ def start_private_chat(username):
     private_message_entry.setStyleSheet(f"""
         background-color: {ENTRY_BG_COLOR};
         border-radius: 10px;
-        padding: 10px;
+        padding: 5px;
         color: {TEXT_COLOR};
         border: 2px solid {BUTTON_COLOR};
         border-top: 3px solid {BUTTON_HOVER_COLOR};
@@ -666,11 +711,12 @@ def start_private_chat(username):
     # Добавляем кнопку "Просмотр профиля"
     view_profile_button = QPushButton("Просмотр профиля")
     view_profile_button.setStyleSheet(f"background-color: {BUTTON_COLOR}; color: {TEXT_COLOR}; border-radius: 10px; padding: 10px;")
-    view_profile_button.clicked.connect(lambda: open_user_profile(username))  # Открываем профиль пользователя
+    view_profile_button.clicked.connect(lambda: open_user_profile(username))
     input_layout.addWidget(view_profile_button)
 
     layout.addWidget(input_frame)
 
+    # Добавляем информацию об окне в глобальный словарь
     private_chat_windows[username] = {
         'window': private_chat_window,
         'text_edit': text_edit,
@@ -744,7 +790,7 @@ def setup_main_window():
     message_entry.setStyleSheet(f"""
         background-color: {ENTRY_BG_COLOR};
         border-radius: 10px;
-        padding: 10px;
+        padding: 5px;
         color: {TEXT_COLOR};
         border: 2px solid {BUTTON_COLOR};
         border-top: 3px solid {BUTTON_HOVER_COLOR};
