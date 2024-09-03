@@ -212,12 +212,12 @@ def login():
 @app.route('/all_users', methods=['GET'])
 def get_all_users():
     conn, cur = get_db()
-    cur.execute("SELECT username FROM users")
+    cur.execute("SELECT id, username, last_name, first_name, middle_name FROM users")
     users = cur.fetchall()
     conn.close()
 
-    user_list = [user[0] for user in users]
-    return jsonify({'users': user_list}), 200
+    user_dict = {user[1]: {'id': user[0], 'last_name': user[2], 'first_name': user[3], 'middle_name': user[4]} for user in users}
+    return jsonify({'users': user_dict}), 200
 
 @socketio.on('connect')
 def handle_connect():
@@ -232,10 +232,12 @@ def handle_connect():
             join_room('global_room')
 
             conn, cur = get_db()
-            cur.execute("SELECT username FROM users")
+            # Получаем словарь всех пользователей
+            cur.execute("SELECT id, username, last_name, first_name, middle_name FROM users")
             users = cur.fetchall()
-            user_list = [user[0] for user in users]
-            emit('all_users', user_list, to=request.sid)
+            user_dict = {user[1]: {'id': user[0], 'last_name': user[2], 'first_name': user[3], 'middle_name': user[4]} for user in users}
+
+            emit('all_users', user_dict, to=request.sid)
 
             # Получаем количество непрочитанных сообщений
             cur.execute("""

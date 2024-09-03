@@ -53,18 +53,20 @@ def register():
     # Генерация логина
     username = f"{last_name}{first_name[0]}{middle_name[0]}"
 
+    user_data = {
+        'username': username,
+        'password': password,
+        'last_name': last_name,
+        'first_name': first_name,
+        'middle_name': middle_name,
+        'birth_date': birth_date,
+        'work_email': work_email,
+        'personal_email': personal_email,
+        'phone_number': phone_number
+    }
+
     try:
-        response = requests.post(f"{HOST}/register", json={
-            'username': username,
-            'password': password,
-            'last_name': last_name,
-            'first_name': first_name,
-            'middle_name': middle_name,
-            'birth_date': birth_date,
-            'work_email': work_email,
-            'personal_email': personal_email,
-            'phone_number': phone_number
-        })
+        response = requests.post(f"{HOST}/register", json=user_data)
         if response.status_code == 201:
             QMessageBox.information(reg_window, "Успех", "Регистрация прошла успешно!")
             reg_window.accept()
@@ -316,8 +318,12 @@ def all_users(users):
     """Обработчик для получения списка всех пользователей."""
     global all_users
     print(f"Received all users: {users}")
-    if isinstance(users, list) and all(isinstance(user, str) for user in users):
-        all_users = users
+    
+    if isinstance(users, dict):
+        all_users = [
+            {'username': username, **details}
+            for username, details in users.items()
+        ]
         update_user_listbox()
     else:
         print("Unexpected data format:", users)
@@ -464,7 +470,9 @@ def show_user_profile(username):
     """Показывает информацию о пользователе в новом окне."""
     # Ищем данные о пользователе
     user_data = next((user for user in all_users if user['username'] == username), None)
+    
     if user_data:
+        print(f"Показ профиля пользователя: {user_data}")  # Отладка
         profile_window = QDialog(main_window)
         profile_window.setWindowTitle(f"Профиль пользователя: {username}")
         layout = QVBoxLayout(profile_window)
@@ -474,6 +482,8 @@ def show_user_profile(username):
             layout.addWidget(QLabel(f"{key.replace('_', ' ').title()}: {value}"))
 
         profile_window.exec()
+    else:
+        QMessageBox.critical(main_window, "Ошибка", "Не удалось найти информацию о пользователе.")
 
 def update_user_listbox():
     """Обновление списка пользователей с контекстным меню."""
@@ -481,17 +491,36 @@ def update_user_listbox():
 
     user_listbox.clear()
 
-    for username in all_users:
-        if username == current_username:
-            continue
-        item_text = f"{username} ({unread_counts.get(username, 0)} нов.)"
-        item = QListWidgetItem(item_text)
-        item.setForeground(QBrush(QColor(USER_COLOR)))
-        user_listbox.addItem(item)
+    # Проверка, что all_users содержит список словарей
+    if isinstance(all_users, list) and all(isinstance(user, dict) for user in all_users):
+        for user in all_users:
+            username = user.get('username')
+            if username and username != current_username:
+                item_text = f"{username} ({unread_counts.get(username, 0)} нов.)"
+                item = QListWidgetItem(item_text)
+                item.setForeground(QBrush(QColor(USER_COLOR)))
+                user_listbox.addItem(item)
+    else:
+        print("Неверный формат данных о пользователях:", all_users)
 
-    # Добавляем контекстное меню
+    # Привязываем обработчик события contextMenuEvent к списку пользователей
     user_listbox.setContextMenuPolicy(Qt.CustomContextMenu)
-    user_listbox.customContextMenuRequested.connect(on_user_listbox_custom_context_menu)
+    user_listbox.customContextMenuRequested.connect(show_context_menu)
+
+def show_context_menu(position):
+    """Отображение контекстного меню для выбранного пользователя."""
+    item = user_listbox.itemAt(position)
+    if item:
+        username = item.text().split()[0]  # Извлекаем имя пользователя из текста элемента
+
+        menu = QMenu()
+        profile_action = menu.addAction("Показать профиль")
+        # Добавление других действий в контекстное меню можно сделать аналогично
+
+        action = menu.exec(user_listbox.mapToGlobal(position))
+
+        if action == profile_action:
+            show_user_profile(username)
 
 def on_user_listbox_custom_context_menu(pos):
     """Отображает контекстное меню при нажатии правой кнопкой мыши на элемент списка пользователей."""
@@ -501,15 +530,52 @@ def on_user_listbox_custom_context_menu(pos):
     if not index.isValid():
         return
 
-    username = all_users[index.row()]['username']
+    item = user_listbox.itemFromIndex(index)
+    item_text = item.text()
 
-    menu = QMenu()
-    profile_action = menu.addAction("Просмотреть профиль")
-    action = menu.exec(user_listbox.viewport().mapToGlobal(pos))
+    # Извлекаем имя пользователя
+    username = item_text.split(' ')[0]
 
-    if action == profile_action:
-        show_user_profile(username)
+def on_user_right_click(pos):
+    """Обработчик для вызова контекстного меню при правом клике на пользователе."""
+    item = user_listbox.itemAt(pos)
+    if item:
+        menu = QMenu()
+        profile_action = menu.addAction("Открыть профиль")
+        action = menu.exec_(user_listbox.mapToGlobal(pos))
+        if action == profile_action:
+            username = item.text()
+            open_user_profile(username)
 
+def open_user_profile(username):
+    """Открывает окно с информацией о пользователе."""
+    # Здесь мы должны получить информацию о пользователе из базы данных
+    user_data = next((user for user in all_users if user['username'] == username), None)
+    
+    if not user_data:
+        QMessageBox.critical(main_window, "Ошибка", "Не удалось загрузить данные пользователя")
+        return
+    
+    profile_window = QDialog(main_window)
+    profile_window.setWindowTitle(f"Профиль пользователя: {username}")
+    profile_window.setStyleSheet(f"background-color: {BG_COLOR}; color: {TEXT_COLOR};")
+    
+    layout = QVBoxLayout()
+
+    for key, label in {
+        'last_name': 'Фамилия',
+        'first_name': 'Имя',
+        'middle_name': 'Отчество',
+        'birth_date': 'Дата рождения',
+        'work_email': 'Рабочая почта',
+        'personal_email': 'Личная почта',
+        'phone_number': 'Телефон'
+    }.items():
+        value = user_data.get(key, 'Не указано')
+        layout.addWidget(QLabel(f"{label}: {value}"))
+    
+    profile_window.setLayout(layout)
+    profile_window.exec_()
 
 def start_private_chat(username):
     """Открытие личного чата с пользователем."""
