@@ -406,6 +406,10 @@ def private_message(data):
     file_name = data.get('file_name')
     file_data = data.get('file_data')
 
+    # Если отправитель — текущий пользователь, выходим из функции
+    if sender == current_username:
+        return
+
     # Проверяем, кому адресовано сообщение
     if recipient == current_username:
         if sender in private_chat_windows:
@@ -423,20 +427,15 @@ def private_message(data):
             scrollbar = private_chat_text_edit.verticalScrollBar()
             scrollbar.setValue(scrollbar.maximum())
 
-            # Если окно чата открыто и активно
+            # Если окно чата с этим пользователем активно, не увеличиваем счетчик непрочитанных сообщений
             if private_chat_windows[sender]['window'].isVisible() and private_chat_windows[sender]['window'].isActiveWindow():
                 unread_messages[sender] = 0  # Сбрасываем счетчик непрочитанных сообщений
             else:
-                # Увеличиваем счетчик, если окно не активно
-                unread_messages[sender] = unread_messages.get(sender, 0) + 1
+                unread_messages[sender] = unread_messages.get(sender, 0) + 1  # Увеличиваем счетчик, если окно не активно
 
             update_user_listbox()
         else:
             print(f"Чат с пользователем {sender} не открыт")
-
-        # Отправитель не должен видеть свои сообщения как непрочитанные
-        if recipient != current_username:
-            return
 @sio.event
 def message_received(data):
     sender = data.get('from')
@@ -522,9 +521,9 @@ def show_user_profile(username):
 
 def update_user_listbox():
     """Обновление списка пользователей с контекстным меню."""
-    global user_listbox, all_users, unread_messages, chat_windows_state
+    global user_listbox, all_users, unread_messages, private_chat_windows
 
-    user_listbox.clear()
+    user_listbox.clear()  # Очищаем список перед обновлением
 
     # Проверка, что all_users содержит список словарей
     if isinstance(all_users, list) and all(isinstance(user, dict) for user in all_users):
@@ -534,9 +533,11 @@ def update_user_listbox():
                 item_text = username
                 item = QListWidgetItem(item_text)
 
-                # Проверяем состояние окна и обновляем видимость индикатора непрочитанных сообщений
-                if username in unread_messages and unread_messages[username] > 0 and not chat_windows_state.get(username, False):
-                    item_text += f" ⚠️ ({unread_messages[username]})"
+                # Проверяем, есть ли открытое окно чата и видимо ли оно
+                if username in private_chat_windows and private_chat_windows[username]['window'].isVisible():
+                    unread_messages[username] = 0  # Если окно открыто, сбрасываем счетчик непрочитанных сообщений
+                elif username in unread_messages and unread_messages[username] > 0:
+                    item_text += " ⚠️"  # Добавляем только символ, если окно чата закрыто или неактивно
                     item.setText(item_text)
                     item.setForeground(QBrush(QColor("red")))  # Красный цвет текста
                     font = item.font()
@@ -552,7 +553,6 @@ def update_user_listbox():
     # Привязываем обработчик события contextMenuEvent к списку пользователей
     user_listbox.setContextMenuPolicy(Qt.CustomContextMenu)
     user_listbox.customContextMenuRequested.connect(show_context_menu)
-
 def show_context_menu(position):
     """Отображение контекстного меню для выбранного пользователя."""
     item = user_listbox.itemAt(position)
@@ -677,7 +677,8 @@ def start_private_chat(username):
         private_chat_windows[username]['window'].show()
         private_chat_windows[username]['window'].raise_()
         private_chat_windows[username]['window'].activateWindow()
-        # Сброс количества непрочитанных сообщений
+        
+        # Сбрасываем количество непрочитанных сообщений при открытии окна
         unread_messages[username] = 0
         update_user_listbox()
         return
@@ -746,6 +747,15 @@ def start_private_chat(username):
 
     # Запрашиваем историю чата
     sio.emit('request_chat_history', {'type': 'private', 'username': username})
+
+    # Сбрасываем количество непрочитанных сообщений при открытии окна
+    unread_messages[username] = 0
+    update_user_listbox()
+
+    # Показываем окно чата
+    private_chat_window.show()
+    private_chat_window.raise_()
+    private_chat_window.activateWindow()
 
 def send_private_message(username, message_entry):
     """Отправка личного сообщения."""
