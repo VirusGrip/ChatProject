@@ -624,7 +624,7 @@ def open_user_profile(username):
         background-color: {ENTRY_BG_COLOR};
         border-radius: 10px;
         padding: 10px;
-        color: {TEXT_COLOR};
+        color: white;
         border: 2px solid {BUTTON_COLOR};
     """)
 
@@ -635,14 +635,19 @@ def open_user_profile(username):
         <style>
             .profile-label {{
                 font-weight: bold;
-                color: {BUTTON_COLOR};
+                color: lightblue;  /* Светло-синий цвет для заголовков */
             }}
             .profile-value {{
-                color: {TEXT_COLOR};
+                color: white;  /* Белый цвет для текста */
+                background-color: {ENTRY_BG_COLOR};  /* Фоновый цвет для текста */
+                padding: 5px;
+                border: 1px solid {BUTTON_COLOR};  /* Рамка вокруг текста */
+                border-radius: 5px;
+                display: inline-block;
+                margin-bottom: 5px;
             }}
             p {{
-                margin: 2px 0; /* Уменьшение расстояния между строками */
-                line-height: 1.2; /* Уменьшение высоты строки */
+                margin: 0;  /* Убираем отступы вокруг параграфов */
             }}
         </style>
     </head>
@@ -665,17 +670,15 @@ def open_user_profile(username):
     profile_window.exec_()
 
 def start_private_chat(username):
-    global private_chat_windows, unread_messages, chat_windows_state
+    global private_chat_windows
 
     # Если окно уже существует, просто делаем его видимым
     if username in private_chat_windows:
         private_chat_windows[username]['window'].show()
         private_chat_windows[username]['window'].raise_()
         private_chat_windows[username]['window'].activateWindow()
-
         # Сброс количества непрочитанных сообщений
         unread_messages[username] = 0
-        chat_windows_state[username] = True  # Устанавливаем флаг как активное
         update_user_listbox()
         return
 
@@ -687,7 +690,7 @@ def start_private_chat(username):
     layout = QVBoxLayout(private_chat_window)
 
     text_edit = QTextBrowser()
-    text_edit.setOpenExternalLinks(True)
+    text_edit.setOpenExternalLinks(True)  # Позволяет открывать ссылки во внешнем браузере
     text_edit.setStyleSheet(f"""
         background-color: {ENTRY_BG_COLOR};
         border-radius: 10px;
@@ -726,22 +729,20 @@ def start_private_chat(username):
     emoji_button.clicked.connect(lambda: open_emoji_picker(private_message_entry))
     input_layout.addWidget(emoji_button)
 
+    # Добавляем кнопку "Просмотр профиля"
+    view_profile_button = QPushButton("Просмотр профиля")
+    view_profile_button.setStyleSheet(f"background-color: {BUTTON_COLOR}; color: {TEXT_COLOR}; border-radius: 10px; padding: 10px;")
+    view_profile_button.clicked.connect(lambda: open_user_profile(username))
+    input_layout.addWidget(view_profile_button)
+
     layout.addWidget(input_frame)
 
+    # Добавляем информацию об окне в глобальный словарь
     private_chat_windows[username] = {
         'window': private_chat_window,
         'text_edit': text_edit,
         'message_entry': private_message_entry
     }
-
-    private_chat_window.show()
-
-    # Устанавливаем состояние окна как открытое
-    chat_windows_state[username] = True
-
-    # Сброс количества непрочитанных сообщений
-    unread_messages[username] = 0
-    update_user_listbox()
 
     # Запрашиваем историю чата
     sio.emit('request_chat_history', {'type': 'private', 'username': username})
