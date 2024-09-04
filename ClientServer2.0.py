@@ -537,7 +537,7 @@ def update_user_listbox():
 
                 # Добавляем символ, если есть непрочитанные сообщения
                 if username != current_username and unread_messages.get(username, 0) > 0:
-                    item_text += f" ⚠️ ({unread_messages[username]})"
+                    item_text += f" ⚠️ "
                     item.setText(item_text)
                     item.setForeground(QBrush(QColor("red")))
                     font = item.font()
@@ -747,7 +747,7 @@ def start_private_chat(username):
 
     # Запрашиваем историю чата
     sio.emit('request_chat_history', {'type': 'private', 'username': username})
-
+    sio.emit('mark_messages_as_read', {'username': username})
     # Сбрасываем количество непрочитанных сообщений при открытии окна
     unread_messages[username] = 0
     update_user_listbox()
