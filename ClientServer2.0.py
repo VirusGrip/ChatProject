@@ -403,13 +403,11 @@ def private_message(data):
     file_name = data.get('file_name')
     file_data = data.get('file_data')
 
-    # Если отправитель — текущий пользователь, выходим из функции
     if sender == current_username:
         return
 
-    # Проверяем, кому адресовано сообщение
     if recipient == current_username:
-        if sender in private_chat_windows:
+        if sender in private_chat_windows and private_chat_windows[sender]['window'].isVisible():
             private_chat_text_edit = private_chat_windows[sender]['text_edit']
 
             # Если сообщение содержит файл
@@ -426,13 +424,18 @@ def private_message(data):
 
             # Если окно чата с этим пользователем активно, не увеличиваем счетчик непрочитанных сообщений
             if private_chat_windows[sender]['window'].isVisible() and private_chat_windows[sender]['window'].isActiveWindow():
-                unread_messages[sender] = 0  # Сбрасываем счетчик непрочитанных сообщений
+                unread_messages[sender] = 0
             else:
-                unread_messages[sender] = unread_messages.get(sender, 0) + 1  # Увеличиваем счетчик, если окно не активно
+                unread_messages[sender] += 1
 
-            update_user_listbox()
         else:
-            print(f"Чат с пользователем {sender} не открыт")
+            # Увеличиваем счетчик непрочитанных сообщений, так как окно чата не активно или не существует
+            unread_messages[sender] = unread_messages.get(sender, 0) + 1
+
+        update_user_listbox()
+    else:
+        print(f"Чат с пользователем {sender} не открыт")
+
 @sio.event
 def message_received(data):
     sender = data.get('from')
@@ -517,10 +520,9 @@ def show_user_profile(username):
         QMessageBox.critical(main_window, "Ошибка", "Не удалось найти информацию о пользователе.")
 
 def update_user_listbox():
-    """Обновление списка пользователей с контекстным меню."""
     global user_listbox, all_user_data, unread_messages, private_chat_windows, current_username
 
-    user_listbox.clear()  # Очищаем список перед обновлением
+    user_listbox.clear()
 
     if isinstance(all_user_data, list) and all(isinstance(user, dict) for user in all_user_data):
         for user in all_user_data:
@@ -531,24 +533,23 @@ def update_user_listbox():
 
                 # Проверяем, есть ли открытое окно чата и видимо ли оно
                 if username in private_chat_windows and private_chat_windows[username]['window'].isVisible():
-                    unread_messages[username] = 0  # Если окно открыто, сбрасываем счетчик непрочитанных сообщений
+                    unread_messages[username] = 0
 
-                # Проверка непрочитанных сообщений, и только если это не текущий пользователь
+                # Добавляем символ, если есть непрочитанные сообщения
                 if username != current_username and unread_messages.get(username, 0) > 0:
-                    item_text += " ⚠️"  # Добавляем символ, если есть непрочитанные сообщения
+                    item_text += f" ⚠️ ({unread_messages[username]})"
                     item.setText(item_text)
-                    item.setForeground(QBrush(QColor("red")))  # Красный цвет текста для пользователей с непрочитанными сообщениями
+                    item.setForeground(QBrush(QColor("red")))
                     font = item.font()
-                    font.setBold(True)  # Жирный шрифт для пользователей с непрочитанными сообщениями
+                    font.setBold(True)
                     item.setFont(font)
                 else:
-                    item.setForeground(QBrush(QColor(USER_COLOR)))  # Устанавливаем обычный цвет текста для всех остальных
+                    item.setForeground(QBrush(QColor(USER_COLOR)))
 
                 user_listbox.addItem(item)
     else:
         print("Неверный формат данных о пользователях:", all_user_data)
 
-    # Привязываем обработчик события contextMenuEvent к списку пользователей
     user_listbox.setContextMenuPolicy(Qt.CustomContextMenu)
     user_listbox.customContextMenuRequested.connect(show_context_menu)
 

@@ -245,7 +245,8 @@ def handle_connect():
             join_room('global_room')
 
             conn, cur = get_db()
-            # Получаем словарь всех пользователей
+
+            # Получаем всех пользователей
             cur.execute("SELECT id, username, last_name, first_name, middle_name, birth_date, work_email, personal_email, phone_number FROM users")
             users = cur.fetchall()
             user_dict = {
@@ -264,7 +265,7 @@ def handle_connect():
 
             emit('all_users', user_dict, to=request.sid)
 
-            # Получаем количество непрочитанных сообщений
+            # Получаем количество непрочитанных сообщений для текущего пользователя
             cur.execute("""
                 SELECT users.username, COUNT(private_messages.id) as unread_count
                 FROM private_messages
@@ -283,17 +284,6 @@ def handle_connect():
             for msg, sender in unread_messages:
                 emit('private_message', {'from': sender, 'to': session['username'], 'text': msg})
 
-            # Помечаем все непрочитанные сообщения как прочитанные
-            cur.execute("UPDATE private_messages SET is_read = 1 WHERE recipient_id = ?", (session['user_id'],))
-            
-            # Проверяем наличие файлов для пользователя и отправляем уведомления
-            cur.execute("SELECT users.username, files.file_path FROM files JOIN users ON files.user_id = users.id WHERE recipient_id = ?", 
-                        (session['user_id'],))
-            unread_files = cur.fetchall()
-            for sender, file_path in unread_files:
-                emit('file_received', {'from': sender, 'file_path': f"{HOST}/files/{file_path}"})
-
-            conn.commit()
             conn.close()
 
             emit('user_list', list(active_users.values()), broadcast=True)
@@ -433,11 +423,7 @@ def handle_private_message(data):
     join_room(room)
 
     recipient_sid = next((sid for sid, name in active_users.items() if name == recipient), None)
-    if recipient_sid:
-        emit('private_message', {'from': username, 'to': recipient, 'text': message_text}, room=room)
-        is_read = 0
-    else:
-        is_read = 0
+    is_read = 0  # Сообщение считается непрочитанным до тех пор, пока получатель не откроет чат
 
     user_id = session.get('user_id')
     conn, cur = get_db()
@@ -450,13 +436,17 @@ def handle_private_message(data):
                     (user_id, recipient_id, message_text, is_read))
         conn.commit()
 
+        # Уведомляем получателя о новом сообщении
+        emit('private_message', {'from': username, 'to': recipient, 'text': message_text}, room=recipient_sid if recipient_sid else None)
+
         # Обновляем количество непрочитанных сообщений для получателя
         cur.execute("""
             SELECT COUNT(id) FROM private_messages
             WHERE recipient_id = ? AND is_read = 0
         """, (recipient_id,))
         unread_count = cur.fetchone()[0]
-        emit('unread_counts', {recipient: unread_count}, room=recipient_sid)
+        if recipient_sid:
+            emit('unread_counts', {recipient: unread_count}, room=recipient_sid)
     else:
         emit('error', {'message': 'Ошибка: Получатель не найден в базе данных'})
 
