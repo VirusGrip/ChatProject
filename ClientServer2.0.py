@@ -21,7 +21,7 @@ current_username = None
 user_listbox = None
 chat_box = None
 message_entry = None
-all_users = []  # Список всех зарегистрированных пользователей
+all_user_data = []   # Список всех зарегистрированных пользователей
 private_chat_windows = {}  # Словарь для хранения ссылок на окна приватных чатов
 history_loaded = False  # Флаг для отслеживания загрузки истории сообщений
 unread_messages = {} 
@@ -315,16 +315,13 @@ def disconnect():
 
 @sio.event
 def all_users(users):
-    global all_users, unread_messages
-    print(f"Received all users: {users}")
-    
+    global all_user_data, unread_messages
+
     if isinstance(users, dict):
-        all_users = [
-            {'username': username, **details}
-            for username, details in users.items()
-        ]
-        # Обновляем словарь unread_messages, если это нужно
-        unread_messages = {user['username']: unread_messages.get(user['username'], 0) for user in all_users}
+        # Объединяем данные о пользователях и непрочитанные сообщения
+        all_user_data = [{'username': username, **details} for username, details in users.items()]
+        unread_messages = {user['username']: unread_messages.get(user['username'], 0) for user in all_user_data}
+
         update_user_listbox()
     else:
         print("Unexpected data format:", users)
@@ -334,9 +331,9 @@ def unread_counts(data):
     global unread_messages
     if isinstance(data, dict):
         unread_messages.update(data)
+        update_user_listbox()
     else:
         print("Unexpected data format:", data)
-    update_user_listbox()
 
 @sio.event
 def global_message(data):
@@ -521,38 +518,40 @@ def show_user_profile(username):
 
 def update_user_listbox():
     """Обновление списка пользователей с контекстным меню."""
-    global user_listbox, all_users, unread_messages, private_chat_windows
+    global user_listbox, all_user_data, unread_messages, private_chat_windows, current_username
 
     user_listbox.clear()  # Очищаем список перед обновлением
 
-    # Проверка, что all_users содержит список словарей
-    if isinstance(all_users, list) and all(isinstance(user, dict) for user in all_users):
-        for user in all_users:
+    if isinstance(all_user_data, list) and all(isinstance(user, dict) for user in all_user_data):
+        for user in all_user_data:
             username = user.get('username')
-            if username and username != current_username:
+            if username:
                 item_text = username
                 item = QListWidgetItem(item_text)
 
                 # Проверяем, есть ли открытое окно чата и видимо ли оно
                 if username in private_chat_windows and private_chat_windows[username]['window'].isVisible():
                     unread_messages[username] = 0  # Если окно открыто, сбрасываем счетчик непрочитанных сообщений
-                elif username in unread_messages and unread_messages[username] > 0:
-                    item_text += " ⚠️"  # Добавляем только символ, если окно чата закрыто или неактивно
+
+                # Проверка непрочитанных сообщений, и только если это не текущий пользователь
+                if username != current_username and unread_messages.get(username, 0) > 0:
+                    item_text += " ⚠️"  # Добавляем символ, если есть непрочитанные сообщения
                     item.setText(item_text)
-                    item.setForeground(QBrush(QColor("red")))  # Красный цвет текста
+                    item.setForeground(QBrush(QColor("red")))  # Красный цвет текста для пользователей с непрочитанными сообщениями
                     font = item.font()
-                    font.setBold(True)  # Жирный шрифт
+                    font.setBold(True)  # Жирный шрифт для пользователей с непрочитанными сообщениями
                     item.setFont(font)
                 else:
-                    item.setForeground(QBrush(QColor(USER_COLOR)))  # Обычный цвет текста
+                    item.setForeground(QBrush(QColor(USER_COLOR)))  # Устанавливаем обычный цвет текста для всех остальных
 
                 user_listbox.addItem(item)
     else:
-        print("Неверный формат данных о пользователях:", all_users)
+        print("Неверный формат данных о пользователях:", all_user_data)
 
     # Привязываем обработчик события contextMenuEvent к списку пользователей
     user_listbox.setContextMenuPolicy(Qt.CustomContextMenu)
     user_listbox.customContextMenuRequested.connect(show_context_menu)
+
 def show_context_menu(position):
     """Отображение контекстного меню для выбранного пользователя."""
     item = user_listbox.itemAt(position)
@@ -605,7 +604,7 @@ def on_user_right_click(pos):
 def open_user_profile(username):
     """Открывает окно с информацией о пользователе."""
     # Получаем информацию о пользователе
-    user_data = next((user for user in all_users if user['username'] == username), None)
+    user_data = next((user for user in all_user_data if user['username'] == username), None)
     
     if not user_data:
         QMessageBox.critical(main_window, "Ошибка", "Не удалось загрузить данные пользователя")
