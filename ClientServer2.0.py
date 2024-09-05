@@ -500,25 +500,6 @@ def send_message():
         # Обновляем ползунок прокрутки
         scrollbar = chat_box.verticalScrollBar()
         scrollbar.setValue(scrollbar.maximum())
-def show_user_profile(username):
-    """Показывает информацию о пользователе в новом окне."""
-    # Ищем данные о пользователе
-    user_data = next((user for user in all_users if user['username'] == username), None)
-    
-    if user_data:
-        print(f"Показ профиля пользователя: {user_data}")  # Отладка
-        profile_window = QDialog(main_window)
-        profile_window.setWindowTitle(f"Профиль пользователя: {username}")
-        layout = QVBoxLayout(profile_window)
-
-        for key in ['last_name', 'first_name', 'middle_name', 'birth_date', 'work_email', 'personal_email', 'phone_number']:
-            value = user_data.get(key, 'Не указано')
-            layout.addWidget(QLabel(f"{key.replace('_', ' ').title()}: {value}"))
-
-        profile_window.exec()
-    else:
-        QMessageBox.critical(main_window, "Ошибка", "Не удалось найти информацию о пользователе.")
-
 def update_user_listbox():
     global user_listbox, all_user_data, unread_messages, private_chat_windows, current_username
 
@@ -549,25 +530,6 @@ def update_user_listbox():
                 user_listbox.addItem(item)
     else:
         print("Неверный формат данных о пользователях:", all_user_data)
-
-    user_listbox.setContextMenuPolicy(Qt.CustomContextMenu)
-    user_listbox.customContextMenuRequested.connect(show_context_menu)
-
-def show_context_menu(position):
-    """Отображение контекстного меню для выбранного пользователя."""
-    item = user_listbox.itemAt(position)
-    if item:
-        username = item.text().split()[0]  # Извлекаем имя пользователя из текста элемента
-
-        menu = QMenu()
-        profile_action = menu.addAction("Показать профиль")
-        # Добавление других действий в контекстное меню можно сделать аналогично
-
-        action = menu.exec(user_listbox.mapToGlobal(position))
-
-        if action == profile_action:
-            show_user_profile(username)
-
 def close_private_chat(username):
     """Функция для закрытия окна чата."""
     global chat_windows_state
@@ -576,32 +538,7 @@ def close_private_chat(username):
         private_chat_windows[username]['window'].close()
         chat_windows_state[username] = False  # Устанавливаем флаг как неактивное
         update_user_listbox()
-        
-def on_user_listbox_custom_context_menu(pos):
-    """Отображает контекстное меню при нажатии правой кнопкой мыши на элемент списка пользователей."""
-    global user_listbox
-
-    index = user_listbox.indexAt(pos)
-    if not index.isValid():
-        return
-
-    item = user_listbox.itemFromIndex(index)
-    item_text = item.text()
-
-    # Извлекаем имя пользователя
-    username = item_text.split(' ')[0]
-
-def on_user_right_click(pos):
-    """Обработчик для вызова контекстного меню при правом клике на пользователе."""
-    item = user_listbox.itemAt(pos)
-    if item:
-        menu = QMenu()
-        profile_action = menu.addAction("Открыть профиль")
-        action = menu.exec_(user_listbox.mapToGlobal(pos))
-        if action == profile_action:
-            username = item.text()
-            open_user_profile(username)
-
+    
 def open_user_profile(username):
     """Открывает окно с информацией о пользователе."""
     # Получаем информацию о пользователе

@@ -277,9 +277,13 @@ def handle_connect():
             unread_counts_dict = {username: count for username, count in unread_counts}
             emit('unread_counts', unread_counts_dict, room=request.sid)
 
-            # Отправляем непрочитанные сообщения
-            cur.execute("SELECT message, users.username FROM private_messages JOIN users ON users.id = private_messages.user_id WHERE recipient_id = ? AND is_read = 0", 
-                        (session['user_id'],))
+            # Отправляем только непрочитанные сообщения
+            cur.execute("""
+                SELECT message, users.username 
+                FROM private_messages 
+                JOIN users ON users.id = private_messages.user_id 
+                WHERE recipient_id = ? AND is_read = 0
+            """, (session['user_id'],))
             unread_messages = cur.fetchall()
             for msg, sender in unread_messages:
                 emit('private_message', {'from': sender, 'to': session['username'], 'text': msg})
@@ -423,8 +427,11 @@ def handle_private_message(data):
     join_room(room)
 
     recipient_sid = next((sid for sid, name in active_users.items() if name == recipient), None)
-    is_read = 0  # Сообщение считается непрочитанным до тех пор, пока получатель не откроет чат
 
+    # Если получатель подключен, отправляем ему сообщение
+    if recipient_sid:
+        emit('private_message', {'from': username, 'to': recipient, 'text': message_text}, room=recipient_sid)
+    
     user_id = session.get('user_id')
     conn, cur = get_db()
     cur.execute("SELECT id FROM users WHERE username = ?", (recipient,))
@@ -432,12 +439,9 @@ def handle_private_message(data):
 
     if recipient_data:
         recipient_id = recipient_data[0]
-        cur.execute("INSERT INTO private_messages (user_id, recipient_id, message, is_read) VALUES (?, ?, ?, ?)", 
-                    (user_id, recipient_id, message_text, is_read))
+        cur.execute("INSERT INTO private_messages (user_id, recipient_id, message, is_read) VALUES (?, ?, ?, 0)", 
+                    (user_id, recipient_id, message_text))
         conn.commit()
-
-        # Уведомляем получателя о новом сообщении
-        emit('private_message', {'from': username, 'to': recipient, 'text': message_text}, room=recipient_sid if recipient_sid else None)
 
         # Обновляем количество непрочитанных сообщений для получателя
         cur.execute("""
@@ -445,6 +449,7 @@ def handle_private_message(data):
             WHERE recipient_id = ? AND is_read = 0
         """, (recipient_id,))
         unread_count = cur.fetchone()[0]
+
         if recipient_sid:
             emit('unread_counts', {recipient: unread_count}, room=recipient_sid)
     else:
@@ -470,11 +475,77 @@ def handle_start_private_chat(data):
     recipient_id = recipient[0]
     user_id = session['user_id']
 
+    # Получаем историю чата
     chat_history = get_chat_history(user_id, recipient_id)
     formatted_history = [{'sender': sender, 'text': msg, 'timestamp': timestamp} for msg, timestamp, sender in chat_history]
 
+    # Отправляем историю чата клиенту
     emit('chat_history', {'username': recipient_username, 'messages': formatted_history, 'type': 'private'}, room=request.sid)
 
+    # Проверка данных перед обновлением
+    cur.execute("""
+        SELECT id, is_read, message 
+        FROM private_messages 
+        WHERE recipient_id = ? AND user_id = ? AND is_read = 0
+    """, (user_id, recipient_id))
+    unread_messages = cur.fetchall()
+    print(f"Messages to be marked as read: {unread_messages}")
+
+    # Упростим запрос на обновление, чтобы изолировать проблему
+    cur.execute("""
+        UPDATE private_messages 
+        SET is_read = 1 
+        WHERE recipient_id = ? AND user_id = ? AND is_read = 0
+    """, (user_id, recipient_id))
+
+    # Проверим, сколько строк было обновлено
+    print(f"Messages marked as read: {cur.rowcount}")
+    
+    # Сохраняем изменения
+    conn.commit()
+    print("Changes committed to the database.")
+
+    # Обновляем количество непрочитанных сообщений на клиенте
+    cur.execute("""
+        SELECT COUNT(id) 
+        FROM private_messages 
+        WHERE recipient_id = ? AND is_read = 0
+    """, (user_id,))
+    unread_count = cur.fetchone()[0]
+    emit('unread_counts', {recipient_username: unread_count}, room=request.sid)
+
+    conn.close()
+@socketio.on('mark_messages_as_read')
+def handle_mark_messages_as_read(data):
+    recipient_username = session.get('username')
+    sender_username = data.get('username')
+
+    if not recipient_username or not sender_username:
+        emit('error', {'message': 'Ошибка: Пользователь не найден'})
+        return
+
+    # Получение ID пользователей
+    conn, cur = get_db()
+    cur.execute("SELECT id FROM users WHERE username = ?", (sender_username,))
+    sender = cur.fetchone()
+
+    cur.execute("SELECT id FROM users WHERE username = ?", (recipient_username,))
+    recipient = cur.fetchone()
+
+    if not sender or not recipient:
+        emit('error', {'message': 'Ошибка: Пользователь не найден'})
+        return
+
+    sender_id = sender[0]
+    recipient_id = recipient[0]
+
+    # Обновление статуса сообщений как прочитанных
+    cur.execute("""
+        UPDATE private_messages 
+        SET is_read = 1 
+        WHERE recipient_id = ? AND user_id = ? AND is_read = 0
+    """, (recipient_id, sender_id))
+    conn.commit()
     conn.close()
 
 @socketio.on('disconnect')
