@@ -342,13 +342,12 @@ def global_message(data):
         text = data['text']
         sender = data['sender']
 
-        # Добавляем сообщение только если оно не от текущего пользователя
-        if sender != current_username:
-            chat_box.append(f"{sender}: {text}")
+        # Добавляем сообщение с HTML-разметкой (ссылка будет кликабельной)
+        chat_box.append(f"{sender}: {text}")
 
-            # Обновляем ползунок прокрутки
-            scrollbar = chat_box.verticalScrollBar()
-            scrollbar.setValue(scrollbar.maximum())
+        # Обновляем ползунок прокрутки
+        scrollbar = chat_box.verticalScrollBar()
+        scrollbar.setValue(scrollbar.maximum())
 
 def save_file(file_name, file_data):
     """Сохранение полученного файла на диск."""
@@ -736,7 +735,7 @@ def setup_main_window():
 
     # Заменяем QTextEdit на QTextBrowser
     chat_box = QTextBrowser()
-    chat_box.setOpenExternalLinks(True)  # Это автоматически позволяет открывать ссылки во внешнем браузере
+    chat_box.setOpenExternalLinks(True)  # Включаем поддержку кликабельных ссылок
     chat_box.setStyleSheet(f"""
         background-color: {ENTRY_BG_COLOR};
         border-radius: 10px;

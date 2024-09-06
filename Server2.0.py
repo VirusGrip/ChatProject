@@ -319,34 +319,20 @@ def handle_file_upload(data):
 
         # Вставляем информацию о файле в базу данных
         user_id = session.get('user_id')
-        recipient = data.get('to')
+        file_url = f"http://{HOST}/files/{file_name}"
+        html_message = f"<a href='{file_url}' style='color: #0077ff;'>{file_name}</a>"
 
-        if recipient:
-            conn, cur = get_db()
-            cur.execute("SELECT id FROM users WHERE username = ?", (recipient,))
-            recipient_data = cur.fetchone()
+        # Сохраняем сообщение как HTML-ссылку
+        conn, cur = get_db()
+        cur.execute("INSERT INTO global_messages (user_id, message) VALUES (?, ?)", (user_id, html_message))
+        conn.commit()
+        conn.close()
 
-            if recipient_data:
-                recipient_id = recipient_data[0]
-                cur.execute("INSERT INTO files (user_id, recipient_id, file_path) VALUES (?, ?, ?)",
-                            (user_id, recipient_id, file_name))
-                conn.commit()
-                print(f"File record inserted: {file_name}")
-
-                # Уведомляем получателя о новом файле
-                recipient_sid = next((sid for sid, name in active_users.items() if name == recipient), None)
-                if recipient_sid:
-                    emit('file_received', {'from': username, 'file_path': f"{HOST}/files/{file_name}"}, room=recipient_sid)
-            else:
-                emit('error', {'message': 'Ошибка: Получатель не найден в базе данных'})
-            conn.close()
-        else:
-            emit('error', {'message': 'Ошибка: Получатель не указан'})
+        # Оповещаем всех подключенных пользователей о новом файле
+        emit('global_message', {'sender': username, 'text': html_message}, room='global_room')
 
     except Exception as e:
         emit('error', {'message': f'Ошибка сохранения файла: {str(e)}'})
-
-
 
 @socketio.on('global_message')
 def handle_global_message(data):
