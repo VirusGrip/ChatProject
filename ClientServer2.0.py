@@ -154,13 +154,21 @@ def send_private_file(recipient_username):
         file_name = os.path.basename(file_path)
         with open(file_path, 'rb') as file:
             file_data = file.read()
-            # Отправляем файл на сервер в приватный чат
-            sio.emit('private_message', {'to': recipient_username, 'file_name': file_name, 'file_data': file_data, 'from': current_username})
-        
-        # Добавляем сообщение о загруженном файле в окно приватного чата
+            # Отправляем файл на сервер через отдельное событие
+            sio.emit('private_file_upload', {
+                'to': recipient_username, 
+                'file_name': file_name, 
+                'file_data': file_data, 
+                'from': current_username
+            })
+
+        # Отображаем сообщение о загруженном файле в окне приватного чата
         file_url = create_file_link(file_name)
-        private_chat_windows[recipient_username]['text_edit'].append(f"Вы отправили файл: <a href='{file_url}' style='color: {USER_COLOR}; text-decoration: none;'>{file_name}</a>")
-        private_chat_windows[recipient_username]['text_edit'].append("")  # Добавление пустой строки для форматирования
+        private_chat_windows[recipient_username]['text_edit'].append(
+            f"Вы отправили файл: <a href='{file_url}' style='color: {USER_COLOR}; text-decoration: none;'>{file_name}</a>"
+        )
+        private_chat_windows[recipient_username]['text_edit'].append("")  # Пустая строка для форматирования
+
 
 def create_download_button(file_name, file_data):
     """Создает кнопку для загрузки файла и связывает ее с функцией обработки."""

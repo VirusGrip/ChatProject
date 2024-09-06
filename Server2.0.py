@@ -78,6 +78,7 @@ def get_db():
     return conn, conn.cursor()
 
 def get_chat_history(user_id, recipient_id):
+    """Получаем историю приватного чата между двумя пользователями, включая ссылки на файлы."""
     conn, cur = get_db()
     cur.execute("""
         SELECT private_messages.message, private_messages.timestamp, sender.username as sender
@@ -442,6 +443,57 @@ def handle_private_message(data):
         emit('error', {'message': 'Ошибка: Получатель не найден в базе данных'})
 
     conn.close()
+
+@socketio.on('private_file_upload')
+def handle_private_file_upload(data):
+    """Обрабатывает загрузку файлов в приватных чатах и сохраняет ссылку на файл в базу данных."""
+    recipient_username = data.get('to')
+    file_name = data.get('file_name')
+    file_data = data.get('file_data')
+    sender_username = session.get('username')
+
+    if not sender_username or not recipient_username or not file_name or not file_data:
+        emit('error', {'message': 'Ошибка: данные файла или пользователя отсутствуют'})
+        return
+
+    # Сохраняем файл на сервере
+    file_path = os.path.join(UPLOAD_FOLDER, file_name)
+    try:
+        with open(file_path, 'wb') as f:
+            f.write(file_data)
+
+        # Формируем URL для файла
+        file_url = f"http://{HOST}/files/{file_name}"
+
+        # Находим ID отправителя и получателя
+        conn, cur = get_db()
+        cur.execute("SELECT id FROM users WHERE username = ?", (sender_username,))
+        sender_id = cur.fetchone()[0]
+
+        cur.execute("SELECT id FROM users WHERE username = ?", (recipient_username,))
+        recipient_id = cur.fetchone()[0]
+
+        # Сохраняем сообщение как ссылку на файл в базе данных
+        message = f"<a href='{file_url}' style='color: #0077ff;'>{file_name}</a>"
+        cur.execute("INSERT INTO private_messages (user_id, recipient_id, message, is_read) VALUES (?, ?, ?, 0)", 
+                    (sender_id, recipient_id, message))
+        conn.commit()
+
+        # Отправляем ссылку получателю в реальном времени, если он в сети
+        recipient_sid = next((sid for sid, name in active_users.items() if name == recipient_username), None)
+        if recipient_sid:
+            emit('private_message', {
+                'from': sender_username, 
+                'to': recipient_username, 
+                'file_name': file_name, 
+                'file_url': file_url
+            }, room=recipient_sid)
+
+        conn.close()
+        
+    except Exception as e:
+        emit('error', {'message': f'Ошибка сохранения файла: {str(e)}'})
+
 
 @socketio.on('start_private_chat')
 def handle_start_private_chat(data):
