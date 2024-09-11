@@ -13,7 +13,7 @@ socketio = SocketIO(app, manage_session=True)
 
 # Конфигурация загрузки файлов
 UPLOAD_FOLDER = 'uploads'
-HOST = '10.1.3.187:12345'
+HOST = '10.1.3.188:12345'
 if not os.path.exists(UPLOAD_FOLDER):
     os.makedirs(UPLOAD_FOLDER)
 
@@ -142,14 +142,13 @@ def upload_file():
 
     return jsonify({"file_url": file_url}), 200
 
-@app.route('/files/<filename>')
+@app.route('/uploads/<filename>')
 def uploaded_file(filename):
     file_path = os.path.join(UPLOAD_FOLDER, filename)
     if os.path.exists(file_path):
         return send_from_directory(UPLOAD_FOLDER, filename)
     else:
         return jsonify({"message": "File not found"}), 404
-
 
 @app.route('/uploads/<filename>')
 def download_file(filename):
@@ -444,26 +443,38 @@ def handle_private_message(data):
 
     conn.close()
 
-@socketio.on('private_file_upload')
-def handle_private_file_upload(data):
-    """Обрабатывает загрузку файлов в приватных чатах и сохраняет ссылку на файл в базу данных."""
+@socketio.on('private_file_upload_chunk')
+def handle_private_file_upload_chunk(data):
+    """Обрабатывает получение части файла."""
     recipient_username = data.get('to')
     file_name = data.get('file_name')
-    file_data = data.get('file_data')
+    file_data = data.get('file_data')  # Это часть данных
+    chunk_index = data.get('chunk_index')
+    total_chunks = data.get('total_chunks')
     sender_username = session.get('username')
 
-    if not sender_username or not recipient_username or not file_name or not file_data:
+    if not recipient_username or not file_name or not file_data:
         emit('error', {'message': 'Ошибка: данные файла или пользователя отсутствуют'})
         return
 
-    # Сохраняем файл на сервере
-    file_path = os.path.join(UPLOAD_FOLDER, file_name)
-    try:
-        with open(file_path, 'wb') as f:
-            f.write(file_data)
+    # Временно сохраняем части файла
+    temp_file_path = os.path.join(UPLOAD_FOLDER, f"{file_name}.part{chunk_index}")
+    with open(temp_file_path, 'wb') as f:
+        f.write(file_data)
+
+    # Проверяем, получены ли все части
+    if chunk_index + 1 == total_chunks:
+        # Собираем файл
+        final_file_path = os.path.join(UPLOAD_FOLDER, file_name)
+        with open(final_file_path, 'wb') as final_file:
+            for i in range(total_chunks):
+                part_file_path = os.path.join(UPLOAD_FOLDER, f"{file_name}.part{i}")
+                with open(part_file_path, 'rb') as part_file:
+                    final_file.write(part_file.read())
+                os.remove(part_file_path)  # Удаляем временные части
 
         # Формируем URL для файла
-        file_url = f"http://{HOST}/files/{file_name}"
+        file_url = f"http://{HOST}/uploads/{file_name}"
 
         # Находим ID отправителя и получателя
         conn, cur = get_db()
@@ -479,7 +490,7 @@ def handle_private_file_upload(data):
                     (sender_id, recipient_id, message))
         conn.commit()
 
-        # Отправляем ссылку получателю в реальном времени, если он в сети
+        # Оповещаем получателя о новом файле
         recipient_sid = next((sid for sid, name in active_users.items() if name == recipient_username), None)
         if recipient_sid:
             emit('private_message', {
@@ -490,10 +501,6 @@ def handle_private_file_upload(data):
             }, room=recipient_sid)
 
         conn.close()
-        
-    except Exception as e:
-        emit('error', {'message': f'Ошибка сохранения файла: {str(e)}'})
-
 
 @socketio.on('start_private_chat')
 def handle_start_private_chat(data):
@@ -599,4 +606,4 @@ def handle_disconnect():
 
 if __name__ == '__main__':
     init_db()
-    socketio.run(app, host='10.1.3.187', port=12345)
+    socketio.run(app, host='10.1.3.188', port=12345)

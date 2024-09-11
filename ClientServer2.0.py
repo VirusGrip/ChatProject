@@ -10,7 +10,7 @@ import urllib.parse
 from functools import partial
 
 
-HOST = 'http://10.1.3.187:12345'
+HOST = 'http://10.1.3.188:12345'
 sio = socketio.Client()
 token = None
 
@@ -26,6 +26,7 @@ private_chat_windows = {}  # Словарь для хранения ссылок
 history_loaded = False  # Флаг для отслеживания загрузки истории сообщений
 unread_messages = {} 
 chat_windows_state = {}  # Новый словарь для отслеживания состояния окон чатов
+CHUNK_SIZE = 1024 * 512  # 512KB для каждой части
 # Цвета и шрифты
 BG_COLOR = "#1e1e1e"        # Фоновый цвет
 TEXT_COLOR = "#e0e0e0"      # Цвет текста
@@ -77,7 +78,7 @@ def register():
 
 
 def create_file_link(file_name):
-    """Создает ссылку для файла, корректно кодируя имя файла."""
+    """Создает корректную ссылку для файла."""
     return f"{HOST}/uploads/{urllib.parse.quote(file_name)}"
 
 def open_emoji_picker(target_widget=None):
@@ -148,21 +149,29 @@ def insert_emoji(symbol, target_widget):
         print("Ошибка: target_widget не является QTextEdit или QTextBrowser")
 
 def send_private_file(recipient_username):
-    """Открывает диалог для выбора файла и отправляет его в приватный чат."""
+    """Открывает диалог для выбора файла и отправляет его в приватный чат частями."""
     file_path, _ = QFileDialog.getOpenFileName(main_window, "Выберите файл")
     if file_path:
         file_name = os.path.basename(file_path)
         with open(file_path, 'rb') as file:
             file_data = file.read()
-            # Отправляем файл на сервер через отдельное событие
-            sio.emit('private_file_upload', {
+
+        # Разбиение файла на части
+        file_size = len(file_data)
+        chunks = [file_data[i:i + CHUNK_SIZE] for i in range(0, file_size, CHUNK_SIZE)]
+
+        for index, chunk in enumerate(chunks):
+            # Отправляем файл на сервер по частям
+            sio.emit('private_file_upload_chunk', {
                 'to': recipient_username, 
                 'file_name': file_name, 
-                'file_data': file_data, 
+                'file_data': chunk, 
+                'chunk_index': index,
+                'total_chunks': len(chunks),
                 'from': current_username
             })
 
-        # Отображаем сообщение о загруженном файле в окне приватного чата
+        # Сообщение об успешной отправке
         file_url = create_file_link(file_name)
         private_chat_windows[recipient_username]['text_edit'].append(
             f"Вы отправили файл: <a href='{file_url}' style='color: {USER_COLOR}; text-decoration: none;'>{file_name}</a>"
