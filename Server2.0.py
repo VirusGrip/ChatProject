@@ -299,27 +299,40 @@ def handle_connect():
     else:
         emit('error', {'message': 'Необходим токен для подключения'})
 
-@socketio.on('file_upload')
-def handle_file_upload(data):
-    username = session.get('username')
+@socketio.on('file_upload_chunk')
+def handle_file_upload_chunk(data):
+    """Обрабатывает получение части файла для общего чата."""
     file_name = data.get('file_name')
-    file_data = data.get('file_data')
+    file_data = data.get('file_data')  # Это часть данных
+    chunk_index = data.get('chunk_index')
+    total_chunks = data.get('total_chunks')
+    username = session.get('username')
 
-    if not username or not file_name or not file_data:
-        emit('error', {'message': 'Ошибка: Вы не авторизованы или не указаны данные файла'})
+    if not file_name or not file_data:
+        emit('error', {'message': 'Ошибка: данные файла или пользователя отсутствуют'})
         return
 
-    file_path = os.path.join(UPLOAD_FOLDER, file_name)
+    # Временно сохраняем части файла
+    temp_file_path = os.path.join(UPLOAD_FOLDER, f"{file_name}.part{chunk_index}")
+    with open(temp_file_path, 'wb') as f:
+        f.write(file_data)
 
-    try:
-        # Сохраняем файл на сервере
-        with open(file_path, 'wb') as file:
-            file.write(file_data)
-        print(f"File saved: {file_name}")
+    # Проверяем, получены ли все части
+    if chunk_index + 1 == total_chunks:
+        # Собираем файл
+        final_file_path = os.path.join(UPLOAD_FOLDER, file_name)
+        with open(final_file_path, 'wb') as final_file:
+            for i in range(total_chunks):
+                part_file_path = os.path.join(UPLOAD_FOLDER, f"{file_name}.part{i}")
+                with open(part_file_path, 'rb') as part_file:
+                    final_file.write(part_file.read())
+                os.remove(part_file_path)  # Удаляем временные части
+
+        # Формируем URL для файла
+        file_url = f"http://{HOST}/uploads/{file_name}"
 
         # Вставляем информацию о файле в базу данных
         user_id = session.get('user_id')
-        file_url = f"http://{HOST}/files/{file_name}"
         html_message = f"<a href='{file_url}' style='color: #0077ff;'>{file_name}</a>"
 
         # Сохраняем сообщение как HTML-ссылку
@@ -328,11 +341,8 @@ def handle_file_upload(data):
         conn.commit()
         conn.close()
 
-        # Оповещаем всех подключенных пользователей о новом файле
+        # Оповещаем всех пользователей в общем чате
         emit('global_message', {'sender': username, 'text': html_message}, room='global_room')
-
-    except Exception as e:
-        emit('error', {'message': f'Ошибка сохранения файла: {str(e)}'})
 
 @socketio.on('global_message')
 def handle_global_message(data):

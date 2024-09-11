@@ -185,22 +185,32 @@ def create_download_button(file_name, file_data):
     button.clicked.connect(lambda: save_file(file_name, file_data))
     return button
 
-def send_file(recipient_username):
-    """Открывает диалог для выбора файла и отправляет его на сервер."""
+def send_file():
+    """Открывает диалог для выбора файла и отправляет его на сервер по частям в общий чат."""
     file_path, _ = QFileDialog.getOpenFileName(main_window, "Выберите файл")
     if file_path:
         file_name = os.path.basename(file_path)
         with open(file_path, 'rb') as file:
             file_data = file.read()
-            # Отправляем файл на сервер
-            sio.emit('file_upload', {'file_name': file_name, 'file_data': file_data, 'to': recipient_username})
-        
-        # Добавляем сообщение о загруженном файле в окно чата
+
+        # Разбиение файла на части
+        file_size = len(file_data)
+        chunks = [file_data[i:i + CHUNK_SIZE] for i in range(0, file_size, CHUNK_SIZE)]
+
+        for index, chunk in enumerate(chunks):
+            # Отправляем файл на сервер по частям
+            sio.emit('file_upload_chunk', {
+                'file_name': file_name,
+                'file_data': chunk,
+                'chunk_index': index,
+                'total_chunks': len(chunks),
+                'from': current_username
+            })
+
+        # Сообщение об успешной отправке файла
         file_url = create_file_link(file_name)
         chat_box.append(f"<a href='{file_url}' style='color: {USER_COLOR}; text-decoration: none;'>Вы отправили файл: {file_name}</a>")
-        chat_box.append("")  # Добавление пустой строки для форматирования
-
-
+        chat_box.append("")  # Добавляем пустую строку для форматирования
 
 def open_registration_window():
     """Открывает окно регистрации."""
@@ -786,7 +796,7 @@ def setup_main_window():
 
     send_file_button = QPushButton("Отправить файл")
     send_file_button.setStyleSheet(f"background-color: {BUTTON_COLOR}; color: {TEXT_COLOR}; border-radius: 10px; padding: 10px;")
-    send_file_button.clicked.connect(lambda: send_file(current_username))
+    send_file_button.clicked.connect(send_file)
     input_layout.addWidget(send_file_button)
 
     emoji_button = QPushButton("😀")
