@@ -4,7 +4,7 @@ from werkzeug.security import generate_password_hash, check_password_hash
 from werkzeug.utils import secure_filename
 import sqlite3
 import os
-from flask import copy_current_request_context
+import jwt
 
 app = Flask(__name__)
 app.secret_key = '12345678'
@@ -18,30 +18,6 @@ if not os.path.exists(UPLOAD_FOLDER):
 
 DATABASE = 'chat.db'
 active_users = {}  # Словарь для хранения активных пользователей и их сессий
-
-def auto_login_by_ip():
-    print("Попытка выполнения авто-входа по IP...")
-    user_ip = request.remote_addr
-    print(f"IP клиента: {user_ip}")
-
-    conn = sqlite3.connect(DATABASE)
-    cursor = conn.cursor()
-    cursor.execute("SELECT username, id FROM users WHERE last_ip = ?", (user_ip,))
-    result = cursor.fetchone()
-    conn.close()
-
-    if result:
-        print(f"Пользователь найден по IP: {result}")
-        username, user_id = result
-
-        # Сохраняем идентификатор пользователя в active_users
-        active_users[request.sid] = username
-        
-        # Передаем user_id через WebSocket вместо использования сессии
-        return jsonify({"message": f"Auto-login successful for {username}", "user_id": user_id}), 200
-    else:
-        print("Пользователь с таким IP не найден")
-        return jsonify({"message": "No auto-login possible"}), 401
 
 def init_db():
     if not os.path.exists(DATABASE):
@@ -95,6 +71,20 @@ def init_db():
         ''')
         conn.commit()
         conn.close()
+
+@app.route('/check_token', methods=['GET'])
+def check_token():
+    token = request.headers.get('Authorization')
+    if not token:
+        return jsonify({"message": "Токен отсутствует"}), 401
+
+    try:
+        decoded = jwt.decode(token.split(' ')[1], app.secret_key, algorithms=['HS256'])
+        return jsonify({"message": "Токен действителен"}), 200
+    except jwt.ExpiredSignatureError:
+        return jsonify({"message": "Токен истек"}), 401
+    except jwt.InvalidTokenError:
+        return jsonify({"message": "Неверный токен"}), 401
 
 def get_db():
     conn = sqlite3.connect(DATABASE)
@@ -217,7 +207,7 @@ def register():
 
 @app.route('/login', methods=['POST'])
 def login():
-    data = request.get_json()
+    data = request.json
     username = data['username']
     password = data['password']
 
@@ -227,51 +217,10 @@ def login():
     conn.close()
 
     if user and check_password_hash(user[2], password):
-        session['user_id'] = user[0]
-        session['username'] = username
-        print(f"Пользователь {username} успешно вошел в систему, ID: {user[0]}")
-        return jsonify({'message': 'Login successful'}), 200
+        token = jwt.encode({'user_id': user[0], 'username': username}, app.secret_key, algorithm='HS256')
+        return jsonify({'token': token}), 200
     else:
-        return jsonify({'message': 'Неверный логин или пароль'}), 401
-
-def save_user_ip(username):
-    user_ip = request.remote_addr  # Получение IP-адреса клиента
-    conn = sqlite3.connect(DATABASE)
-    cursor = conn.cursor()
-    
-    # Сохраняем IP-адрес в базе данных
-    cursor.execute("UPDATE users SET last_ip = ? WHERE username = ?", (user_ip, username))
-    conn.commit()
-    conn.close()
-def auto_login_by_ip():
-    user_ip = request.remote_addr
-    conn = sqlite3.connect(DATABASE)
-    cursor = conn.cursor()
-    cursor.execute("SELECT username FROM users WHERE last_ip = ?", (user_ip,))
-    result = cursor.fetchone()
-    conn.close()
-
-    if result:
-        # Найден пользователь с таким IP, авторизуем автоматически
-        username = result[0]
-        session['username'] = username
-        return jsonify({"message": f"Auto-login successful for {username}"}), 200
-    else:
-        # Пользователь с таким IP не найден
-        return jsonify({"message": "No auto-login possible"}), 401
-@app.route('/auto_login', methods=['GET'])
-def auto_login():
-    return auto_login_by_ip()
-
-def add_last_ip_field():
-    conn, cur = get_db()
-    cur.execute("PRAGMA table_info(users);")
-    columns = [column[1] for column in cur.fetchall()]
-    
-    if 'last_ip' not in columns:
-        cur.execute("ALTER TABLE users ADD COLUMN last_ip TEXT")
-        conn.commit()
-    conn.close()
+        return jsonify({'message': 'Неправильный логин или пароль'}), 400
 
 @app.route('/all_users', methods=['GET'])
 def get_all_users():
@@ -297,93 +246,93 @@ def get_all_users():
 
 
 @socketio.on('connect')
-def handle_connect(auth=None):
-    print("Тест авто-входа по IP...")
-    response, status_code = auto_login_by_ip()
+def handle_connect():
+    token = request.headers.get('Authorization')
+    if token:
+        try:
+            decoded = jwt.decode(token.split(' ')[1], app.secret_key, algorithms=['HS256'])
+            session['user_id'] = decoded['user_id']
+            session['username'] = decoded['username']
+            active_users[request.sid] = decoded['username']
 
-    if status_code == 200:
-        data = response.get_json()  # Получаем данные из ответа
-        user_id = data.get('user_id')
-        username = data.get('message').split(" ")[-1]
+            join_room('global_room')
 
-        print(f"Автовход выполнен для пользователя: {username}")
+            conn, cur = get_db()
 
-        # Присоединяем пользователя к комнате
-        join_room('global_room')
+            # Получаем всех пользователей
+            cur.execute("SELECT id, username, last_name, first_name, middle_name, birth_date, work_email, personal_email, phone_number FROM users")
+            users = cur.fetchall()
+            user_dict = {
+                user[1]: {
+                    'id': user[0],
+                    'last_name': user[2],
+                    'first_name': user[3],
+                    'middle_name': user[4],
+                    'birth_date': user[5],
+                    'work_email': user[6],
+                    'personal_email': user[7],
+                    'phone_number': user[8]
+                } 
+                for user in users
+            }
 
-        conn, cur = get_db()
+            emit('all_users', user_dict, to=request.sid)
 
-        # Получаем список пользователей и отправляем данные
-        cur.execute("SELECT id, username, last_name, first_name, middle_name, birth_date, work_email, personal_email, phone_number FROM users")
-        users = cur.fetchall()
-        user_dict = {
-            user[1]: {
-                'id': user[0],
-                'last_name': user[2],
-                'first_name': user[3],
-                'middle_name': user[4],
-                'birth_date': user[5],
-                'work_email': user[6],
-                'personal_email': user[7],
-                'phone_number': user[8]
-            } 
-            for user in users
-        }
+            # Получаем количество непрочитанных сообщений для текущего пользователя
+            cur.execute("""
+                SELECT users.username, COUNT(private_messages.id) as unread_count
+                FROM private_messages
+                JOIN users ON users.id = private_messages.user_id
+                WHERE private_messages.recipient_id = ? AND private_messages.is_read = 0
+                GROUP BY users.username
+            """, (session['user_id'],))
+            unread_counts = cur.fetchall()
+            unread_counts_dict = {username: count for username, count in unread_counts}
+            emit('unread_counts', unread_counts_dict, room=request.sid)
 
-        emit('all_users', user_dict, to=request.sid)
+            # Отправляем только непрочитанные сообщения
+            cur.execute("""
+                SELECT message, users.username 
+                FROM private_messages 
+                JOIN users ON users.id = private_messages.user_id 
+                WHERE recipient_id = ? AND is_read = 0
+            """, (session['user_id'],))
+            unread_messages = cur.fetchall()
+            for msg, sender in unread_messages:
+                emit('private_message', {'from': sender, 'to': session['username'], 'text': msg})
 
-        # Отправляем количество непрочитанных сообщений
-        cur.execute("""
-            SELECT users.username, COUNT(private_messages.id) as unread_count
-            FROM private_messages
-            JOIN users ON users.id = private_messages.user_id
-            WHERE private_messages.recipient_id = ? AND private_messages.is_read = 0
-            GROUP BY users.username
-        """, (user_id,))
-        unread_counts = cur.fetchall()
-        unread_counts_dict = {username: count for username, count in unread_counts}
-        emit('unread_counts', unread_counts_dict, room=request.sid)
+            conn.close()
 
-        conn.close()
-
-        emit('user_list', list(active_users.values()), broadcast=True)
+            emit('user_list', list(active_users.values()), broadcast=True)
+            print(f"Пользователь {session['username']} подключен, session ID: {request.sid}")
+        except jwt.ExpiredSignatureError:
+            emit('error', {'message': 'Токен истек'})
+        except jwt.InvalidTokenError:
+            emit('error', {'message': 'Неверный токен'})
     else:
-        emit('error', {'message': 'Необходим токен для подключения или авто-вход по IP не удался'})
+        emit('error', {'message': 'Необходим токен для подключения'})
 
-@socketio.on('file_upload_chunk')
-def handle_file_upload_chunk(data):
-    """Обрабатывает получение части файла для общего чата."""
-    file_name = data.get('file_name')
-    file_data = data.get('file_data')  # Это часть данных
-    chunk_index = data.get('chunk_index')
-    total_chunks = data.get('total_chunks')
+@socketio.on('file_upload')
+def handle_file_upload(data):
     username = session.get('username')
+    file_name = data.get('file_name')
+    file_data = data.get('file_data')
 
-    if not file_name or not file_data:
-        emit('error', {'message': 'Ошибка: данные файла или пользователя отсутствуют'})
+    if not username or not file_name or not file_data:
+        emit('error', {'message': 'Ошибка: Вы не авторизованы или не указаны данные файла'})
         return
 
-    # Временно сохраняем части файла
-    temp_file_path = os.path.join(UPLOAD_FOLDER, f"{file_name}.part{chunk_index}")
-    with open(temp_file_path, 'wb') as f:
-        f.write(file_data)
+    file_path = os.path.join(UPLOAD_FOLDER, file_name)
 
-    # Проверяем, получены ли все части
-    if chunk_index + 1 == total_chunks:
-        # Собираем файл
-        final_file_path = os.path.join(UPLOAD_FOLDER, file_name)
-        with open(final_file_path, 'wb') as final_file:
-            for i in range(total_chunks):
-                part_file_path = os.path.join(UPLOAD_FOLDER, f"{file_name}.part{i}")
-                with open(part_file_path, 'rb') as part_file:
-                    final_file.write(part_file.read())
-                os.remove(part_file_path)  # Удаляем временные части
-
-        # Формируем URL для файла
-        file_url = f"http://{HOST}/uploads/{file_name}"
+    try:
+        # Сохраняем файл на сервере
+        with open(file_path, 'wb') as file:
+            file.write(file_data)
+        print(f"File saved: {file_name}")
 
         # Вставляем информацию о файле в базу данных
         user_id = session.get('user_id')
+        file_url = f"http://{HOST}/files/{file_name}"
         html_message = f"<a href='{file_url}' style='color: #0077ff;'>{file_name}</a>"
 
         # Сохраняем сообщение как HTML-ссылку
@@ -392,8 +341,11 @@ def handle_file_upload_chunk(data):
         conn.commit()
         conn.close()
 
-        # Оповещаем всех пользователей в общем чате
+        # Оповещаем всех подключенных пользователей о новом файле
         emit('global_message', {'sender': username, 'text': html_message}, room='global_room')
+
+    except Exception as e:
+        emit('error', {'message': f'Ошибка сохранения файла: {str(e)}'})
 
 @socketio.on('global_message')
 def handle_global_message(data):

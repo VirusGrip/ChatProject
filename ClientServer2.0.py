@@ -8,6 +8,7 @@ from PySide6.QtGui import QColor, QBrush, QTextCursor
 import webbrowser
 import urllib.parse
 from functools import partial
+import socket  # Для получения IP-адреса
 
 
 
@@ -27,6 +28,10 @@ private_chat_windows = {}  # Словарь для хранения ссылок
 history_loaded = False  # Флаг для отслеживания загрузки истории сообщений
 unread_messages = {} 
 chat_windows_state = {}  # Новый словарь для отслеживания состояния окон чатов
+# Добавляем путь для хранения токена и IP
+TOKEN_FILE = 'token.txt'
+IP_FILE = 'ip.txt'
+#Размер отправки части файла
 CHUNK_SIZE = 1024 * 512  # 512KB для каждой части
 # Цвета и шрифты
 BG_COLOR = "#1e1e1e"        # Фоновый цвет
@@ -77,6 +82,63 @@ def register():
     except Exception as e:
         QMessageBox.critical(reg_window, "Ошибка", str(e))
 
+def get_local_ip():
+    """Получаем локальный IP-адрес."""
+    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        # Подключаемся к "ненастоящему" серверу, чтобы получить свой IP
+        s.connect(("8.8.8.8", 80))
+        ip = s.getsockname()[0]
+    except Exception as e:
+        ip = "127.0.0.1"  # Если не удалось получить IP, используем localhost
+    finally:
+        s.close()
+    return ip
+
+def save_token_and_ip(token):
+    """Сохраняем токен и IP в файл."""
+    with open(TOKEN_FILE, 'w') as f:
+        f.write(token)
+    with open(IP_FILE, 'w') as f:
+        f.write(get_local_ip())
+
+def load_token_and_ip():
+    """Загружаем токен и IP из файла."""
+    if os.path.exists(TOKEN_FILE) and os.path.exists(IP_FILE):
+        with open(TOKEN_FILE, 'r') as f:
+            token = f.read().strip()
+        with open(IP_FILE, 'r') as f:
+            ip = f.read().strip()
+        return token, ip
+    return None, None
+
+def check_token_validity(token):
+    """Отправляем запрос на сервер для проверки токена."""
+    try:
+        response = requests.get(f"{HOST}/check_token", headers={'Authorization': f'Bearer {token}'})
+        if response.status_code == 200:
+            return True
+        else:
+            return False
+    except Exception as e:
+        print(f"Ошибка проверки токена: {e}")
+        return False
+    
+def try_auto_login():
+    """Пытаемся выполнить автовход при запуске."""
+    saved_token, saved_ip = load_token_and_ip()
+    current_ip = get_local_ip()
+
+    if saved_token and saved_ip and saved_ip == current_ip:
+        if check_token_validity(saved_token):
+            global token
+            token = saved_token
+            print("Автовход выполнен успешно!")
+            setup_main_window()
+            return True
+        else:
+            print("Токен недействителен.")
+    return False
 
 def create_file_link(file_name):
     """Создает корректную ссылку для файла."""
@@ -321,6 +383,7 @@ def login():
             token = response.json().get('token')
             current_username = username  # Сохраняем текущего пользователя
             login_window.close()
+            save_token_and_ip(token)  # Сохраняем токен и IP после успешного входа
             setup_main_window()
         else:
             QMessageBox.critical(login_window, "Ошибка", response.json().get('message', 'Неизвестная ошибка'))
@@ -823,6 +886,9 @@ def setup_main_window():
 
 def open_login_window():
     """Открытие окна входа."""
+    if try_auto_login():
+        return  # Если автовход успешен, не открываем окно входа
+
     global login_window, username_entry, password_entry
 
     login_window = QDialog()
