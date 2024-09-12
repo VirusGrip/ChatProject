@@ -10,6 +10,7 @@ import urllib.parse
 from functools import partial
 
 
+
 HOST = 'http://10.1.3.188:12345'
 sio = socketio.Client()
 token = None
