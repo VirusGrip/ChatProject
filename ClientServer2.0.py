@@ -280,11 +280,6 @@ def send_file():
                 'from': current_username
             })
 
-        # Сообщение об успешной отправке файла
-        file_url = create_file_link(file_name)
-        chat_box.append(f"<a href='{file_url}' style='color: {USER_COLOR}; text-decoration: none;'>Вы отправили файл: {file_name}</a>")
-        chat_box.append("")  # Добавляем пустую строку для форматирования
-
 def open_registration_window():
     """Открывает окно регистрации."""
     global reg_window, reg_last_name_entry, reg_first_name_entry, reg_middle_name_entry, reg_birth_date_entry, reg_work_email_entry, reg_personal_email_entry, reg_phone_number_entry, reg_password_entry
@@ -411,8 +406,12 @@ def connect():
     """Обработчик успешного подключения клиента к серверу."""
     print("Соединение установлено")
     
-    # Запрашиваем историю общего чата при подключении
+    # Запрашиваем историю общего чата при каждом подключении
     sio.emit('request_chat_history', {'type': 'global'})
+
+    # Дополнительно можно запросить историю приватных чатов, если это требуется
+    for username in private_chat_windows:
+        sio.emit('request_chat_history', {'type': 'private', 'username': username})
 
 @sio.event
 def disconnect():
@@ -829,17 +828,25 @@ def send_private_message(username, message_entry):
 
 def logout():
     """Функция для выхода из аккаунта и удаления токена и IP."""
-    # Отправляем событие на сервер
+    global current_username, history_loaded, private_chat_windows, unread_messages, all_user_data  # Объявляем глобальные переменные
+
     sio.emit('logout', {'username': current_username})
-    
+
     # Отключаем WebSocket-соединение
     sio.disconnect()
-    
+
     # Удаляем файлы токена и IP
     if os.path.exists(TOKEN_FILE):
         os.remove(TOKEN_FILE)
     if os.path.exists(IP_FILE):
         os.remove(IP_FILE)
+
+    # Очищаем глобальные переменные
+    current_username = None
+    history_loaded = False  # Сбрасываем флаг истории
+    private_chat_windows = {}
+    unread_messages = {}
+    all_user_data = []
 
     # Сообщаем пользователю и перенаправляем на окно входа
     QMessageBox.information(main_window, "Выход", "Вы вышли из аккаунта.")
@@ -847,6 +854,7 @@ def logout():
     # Закрываем текущее окно и возвращаем пользователя на окно входа
     main_window.close()
     open_login_window()
+
 
 def setup_main_window():
     """Настройка основного окна приложения."""

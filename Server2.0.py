@@ -462,18 +462,17 @@ def handle_private_message(data):
 
     conn.close()
 
-@socketio.on('private_file_upload_chunk')
-def handle_private_file_upload_chunk(data):
-    """Обрабатывает получение части файла."""
-    recipient_username = data.get('to')
+@socketio.on('file_upload_chunk')
+def handle_file_upload_chunk(data):
+    """Обрабатывает получение части файла для общего чата."""
     file_name = data.get('file_name')
     file_data = data.get('file_data')  # Это часть данных
     chunk_index = data.get('chunk_index')
     total_chunks = data.get('total_chunks')
     sender_username = session.get('username')
 
-    if not recipient_username or not file_name or not file_data:
-        emit('error', {'message': 'Ошибка: данные файла или пользователя отсутствуют'})
+    if not file_name or not file_data:
+        emit('error', {'message': 'Ошибка: данные файла отсутствуют'})
         return
 
     # Временно сохраняем части файла
@@ -481,7 +480,7 @@ def handle_private_file_upload_chunk(data):
     with open(temp_file_path, 'wb') as f:
         f.write(file_data)
 
-    # Проверяем, получены ли все части
+    # Проверяем, получены ли все части файла
     if chunk_index + 1 == total_chunks:
         # Собираем файл
         final_file_path = os.path.join(UPLOAD_FOLDER, file_name)
@@ -495,31 +494,24 @@ def handle_private_file_upload_chunk(data):
         # Формируем URL для файла
         file_url = f"http://{HOST}/uploads/{file_name}"
 
-        # Находим ID отправителя и получателя
+        # Сохраняем информацию о файле в базе данных
         conn, cur = get_db()
         cur.execute("SELECT id FROM users WHERE username = ?", (sender_username,))
-        sender_id = cur.fetchone()[0]
+        user_id = cur.fetchone()[0]
 
-        cur.execute("SELECT id FROM users WHERE username = ?", (recipient_username,))
-        recipient_id = cur.fetchone()[0]
+        html_message = f"<a href='{file_url}' style='color: #0077ff;'>{file_name}</a>"
 
-        # Сохраняем сообщение как ссылку на файл в базе данных
-        message = f"<a href='{file_url}' style='color: #0077ff;'>{file_name}</a>"
-        cur.execute("INSERT INTO private_messages (user_id, recipient_id, message, is_read) VALUES (?, ?, ?, 0)", 
-                    (sender_id, recipient_id, message))
+        # Сохраняем сообщение как HTML-ссылку в таблицу global_messages
+        cur.execute("INSERT INTO global_messages (user_id, message) VALUES (?, ?)", (user_id, html_message))
         conn.commit()
 
-        # Оповещаем получателя о новом файле
-        recipient_sid = next((sid for sid, name in active_users.items() if name == recipient_username), None)
-        if recipient_sid:
-            emit('private_message', {
-                'from': sender_username, 
-                'to': recipient_username, 
-                'file_name': file_name, 
-                'file_url': file_url
-            }, room=recipient_sid)
-
         conn.close()
+
+        # Оповещаем всех подключенных пользователей о новом файле
+        emit('global_message', {
+            'sender': sender_username,
+            'text': html_message
+        }, room='global_room')
 
 @socketio.on('start_private_chat')
 def handle_start_private_chat(data):
@@ -627,14 +619,19 @@ def handle_logout(data):
             emit('user_list', list(active_users.values()), broadcast=True)
             print(f"Пользователь {username} отключен по запросу 'logout', session ID: {sid_to_remove}")
             
-            # Отключаем сессию
+            # Отключаем сессию, передаем sid
             handle_disconnect(sid_to_remove)
 @socketio.on('disconnect')
-def handle_disconnect():
-    username = active_users.pop(request.sid, None)
+def handle_disconnect(sid=None):
+    """Обработчик отключения пользователя."""
+    # Если sid передан явно, используем его, иначе используем request.sid
+    if sid is None:
+        sid = request.sid
+        
+    username = active_users.pop(sid, None)
     if username:
         emit('user_list', list(active_users.values()), broadcast=True)
-        print(f"Пользователь {username} отключен, session ID: {request.sid}")
+        print(f"Пользователь {username} отключен, session ID: {sid}")
 
         for room in list(socketio.server.manager.rooms.keys()):
             if room.startswith(f"room_{username}_") or room.endswith(f"_{username}"):
