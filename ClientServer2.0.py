@@ -9,6 +9,7 @@ import webbrowser
 import urllib.parse
 from functools import partial
 import socket  # Для получения IP-адреса
+import jwt
 
 
 
@@ -131,9 +132,18 @@ def try_auto_login():
 
     if saved_token and saved_ip and saved_ip == current_ip:
         if check_token_validity(saved_token):
-            global token
+            global token, current_username
             token = saved_token
-            print("Автовход выполнен успешно!")
+
+            # Декодируем токен и извлекаем имя пользователя
+            try:
+                decoded_token = jwt.decode(token, options={"verify_signature": False})
+                current_username = decoded_token.get('username')  # Извлекаем имя пользователя
+                print(f"Автовход выполнен успешно! Имя пользователя: {current_username}")
+            except Exception as e:
+                print(f"Ошибка декодирования токена: {e}")
+                return False
+            
             setup_main_window()
             return True
         else:
@@ -398,7 +408,11 @@ def connect_socket():
 
 @sio.event
 def connect():
+    """Обработчик успешного подключения клиента к серверу."""
     print("Соединение установлено")
+    
+    # Запрашиваем историю общего чата при подключении
+    sio.emit('request_chat_history', {'type': 'global'})
 
 @sio.event
 def disconnect():
@@ -433,7 +447,7 @@ def global_message(data):
         text = data['text']
         sender = data['sender']
 
-        # Добавляем сообщение с HTML-разметкой (ссылка будет кликабельной)
+        # Добавляем сообщение только при его получении от сервера
         chat_box.append(f"{sender}: {text}")
 
         # Обновляем ползунок прокрутки
@@ -547,6 +561,7 @@ def message_received(data):
 
 @sio.event
 def chat_history(data):
+    """Обработчик получения истории чатов."""
     global history_loaded
     messages = data.get('messages', [])
     chat_type = data.get('type', 'unknown')
@@ -554,42 +569,53 @@ def chat_history(data):
 
     if chat_type == 'global':
         if not history_loaded:
+            # Обработка сообщений из общего чата
             for msg in messages:
-                if 'file_name' in msg:
-                    link_html = f"<a href='{msg.get('file_path')}' style='color: {USER_COLOR}; text-decoration: none;'>{msg.get('file_name')}</a>"
-                    chat_box.append(f"{msg.get('sender', 'Unknown')}: Отправлен файл: {link_html}")
+                sender = msg.get('sender', 'Unknown')
+                text = msg.get('text', '')
+                file_name = msg.get('file_name', None)
+                if file_name:
+                    link_html = f"<a href='{msg.get('file_path')}' style='color: {USER_COLOR}; text-decoration: none;'>{file_name}</a>"
+                    chat_box.append(f"{sender}: Отправлен файл: {link_html}")
                 else:
-                    chat_box.append(f"{msg.get('sender', 'Unknown')}: {msg.get('text', '')}")
+                    chat_box.append(f"{sender}: {text}")
             
+            # Прокручиваем до самого низа
             scrollbar = chat_box.verticalScrollBar()
             scrollbar.setValue(scrollbar.maximum())
             history_loaded = True
     elif chat_type == 'private' and username in private_chat_windows:
+        # Обработка сообщений из приватных чатов
         text_edit = private_chat_windows[username]['text_edit']
         for msg in messages:
-            if 'file_name' in msg:
-                link_html = f"<a href='{msg.get('file_path')}' style='color: {USER_COLOR}; text-decoration: none;'>{msg.get('file_name')}</a>"
-                text_edit.append(f"{msg.get('sender', 'Unknown')}: Отправлен файл: {link_html}")
+            sender = msg.get('sender', 'Unknown')
+            text = msg.get('text', '')
+            file_name = msg.get('file_name', None)
+            if file_name:
+                link_html = f"<a href='{msg.get('file_path')}' style='color: {USER_COLOR}; text-decoration: none;'>{file_name}</a>"
+                text_edit.append(f"{sender}: Отправлен файл: {link_html}")
             else:
-                text_edit.append(f"{msg.get('sender', 'Unknown')}: {msg.get('text', '')}")
-
+                text_edit.append(f"{sender}: {text}")
+        
         # Прокрутка вниз
         scrollbar = text_edit.verticalScrollBar()
         scrollbar.setValue(scrollbar.maximum())
 
 def send_message():
-    """Отправка сообщения в общий чат или личный чат."""
+    """Отправка сообщения в общий чат без его немедленного отображения."""
     global current_username
 
     text = message_entry.toPlainText().strip()
     if text:
-        message_entry.clear()
+        message_entry.clear()  # Очищаем поле ввода
         sio.emit('global_message', {'text': text, 'sender': current_username})
-        chat_box.append(f"{current_username}: {text}")
+        # Убираем строку, которая отображает сообщение сразу
+        # chat_box.append(f"{current_username}: {text}")
 
         # Обновляем ползунок прокрутки
         scrollbar = chat_box.verticalScrollBar()
         scrollbar.setValue(scrollbar.maximum())
+
 def update_user_listbox():
     global user_listbox, all_user_data, unread_messages, private_chat_windows, current_username
 
@@ -650,7 +676,7 @@ def open_user_profile(username):
     profile_text_browser.setStyleSheet(f"""
         background-color: {ENTRY_BG_COLOR};
         border-radius: 10px;
-        padding: 10px;
+        padding: 2px;
         color: white;
         border: 2px solid {BUTTON_COLOR};
     """)
@@ -667,7 +693,7 @@ def open_user_profile(username):
             .profile-value {{
                 color: white;  /* Белый цвет для текста */
                 background-color: {ENTRY_BG_COLOR};  /* Фоновый цвет для текста */
-                padding: 5px;
+                padding: 2px;
                 border: 1px solid {BUTTON_COLOR};  /* Рамка вокруг текста */
                 border-radius: 5px;
                 display: inline-block;
@@ -722,7 +748,7 @@ def start_private_chat(username):
     text_edit.setStyleSheet(f"""
         background-color: {ENTRY_BG_COLOR};
         border-radius: 10px;
-        padding: 10px;
+        padding: 2px;
         color: {TEXT_COLOR};
         border: 2px solid {BUTTON_COLOR};
     """)
@@ -735,7 +761,7 @@ def start_private_chat(username):
     private_message_entry.setStyleSheet(f"""
         background-color: {ENTRY_BG_COLOR};
         border-radius: 10px;
-        padding: 5px;
+        padding: 2px;
         color: {TEXT_COLOR};
         border: 2px solid {BUTTON_COLOR};
         border-top: 3px solid {BUTTON_HOVER_COLOR};
@@ -786,15 +812,41 @@ def start_private_chat(username):
 
 def send_private_message(username, message_entry):
     """Отправка личного сообщения."""
+    global current_username  # Убедимся, что используем глобальную переменную
+
     text = message_entry.toPlainText().strip()
     if text:
         message_entry.clear()
+        # Отправляем сообщение с указанием текущего пользователя
         sio.emit('private_message', {'to': username, 'text': text, 'from': current_username})
+        
+        # Добавляем сообщение в окно чата
         private_chat_windows[username]['text_edit'].append(f"{current_username}: {text}")
 
         # Обновляем ползунок прокрутки
         scrollbar = private_chat_windows[username]['text_edit'].verticalScrollBar()
         scrollbar.setValue(scrollbar.maximum())
+
+def logout():
+    """Функция для выхода из аккаунта и удаления токена и IP."""
+    # Отправляем событие на сервер
+    sio.emit('logout', {'username': current_username})
+    
+    # Отключаем WebSocket-соединение
+    sio.disconnect()
+    
+    # Удаляем файлы токена и IP
+    if os.path.exists(TOKEN_FILE):
+        os.remove(TOKEN_FILE)
+    if os.path.exists(IP_FILE):
+        os.remove(IP_FILE)
+
+    # Сообщаем пользователю и перенаправляем на окно входа
+    QMessageBox.information(main_window, "Выход", "Вы вышли из аккаунта.")
+    
+    # Закрываем текущее окно и возвращаем пользователя на окно входа
+    main_window.close()
+    open_login_window()
 
 def setup_main_window():
     """Настройка основного окна приложения."""
@@ -824,13 +876,12 @@ def setup_main_window():
     chat_frame = QWidget()
     chat_layout = QVBoxLayout(chat_frame)
 
-    # Заменяем QTextEdit на QTextBrowser
     chat_box = QTextBrowser()
-    chat_box.setOpenExternalLinks(True)  # Включаем поддержку кликабельных ссылок
+    chat_box.setOpenExternalLinks(True)
     chat_box.setStyleSheet(f"""
         background-color: {ENTRY_BG_COLOR};
         border-radius: 10px;
-        padding: 10px;
+        padding: 2px;
         color: {TEXT_COLOR};
         border: 2px solid {BUTTON_COLOR};
     """)
@@ -838,7 +889,6 @@ def setup_main_window():
     chat_box.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
     chat_layout.addWidget(chat_box)
 
-    # Создаем и настраиваем input_frame и его виджеты
     input_frame = QWidget()
     input_layout = QHBoxLayout(input_frame)
 
@@ -846,7 +896,7 @@ def setup_main_window():
     message_entry.setStyleSheet(f"""
         background-color: {ENTRY_BG_COLOR};
         border-radius: 10px;
-        padding: 5px;
+        padding: 2px;
         color: {TEXT_COLOR};
         border: 2px solid {BUTTON_COLOR};
         border-top: 3px solid {BUTTON_HOVER_COLOR};
@@ -867,6 +917,12 @@ def setup_main_window():
     emoji_button.setStyleSheet(f"background-color: {BUTTON_COLOR}; color: {TEXT_COLOR}; border-radius: 10px; padding: 10px;")
     emoji_button.clicked.connect(lambda: open_emoji_picker(message_entry))  # Передаем текстовое поле чата
     input_layout.addWidget(emoji_button)
+
+    # Добавляем кнопку выхода
+    logout_button = QPushButton("Выход")
+    logout_button.setStyleSheet(f"background-color: red; color: {TEXT_COLOR}; border-radius: 10px; padding: 10px;")
+    logout_button.clicked.connect(logout)
+    input_layout.addWidget(logout_button)
 
     chat_layout.addWidget(input_frame)
     layout.addWidget(chat_frame)

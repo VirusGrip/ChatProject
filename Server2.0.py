@@ -367,10 +367,15 @@ def handle_global_message(data):
 @socketio.on('request_chat_history')
 def handle_request_chat_history(data):
     chat_type = data.get('type')
-    
+
     if chat_type == 'global':
+        # Получаем историю общего чата
         chat_history = get_global_chat_history()
+        
+        # Форматируем сообщения для отправки клиенту
         formatted_history = [{'sender': sender, 'text': message, 'timestamp': timestamp} for sender, message, timestamp in chat_history]
+        
+        # Отправляем историю общего чата клиенту
         emit('chat_history', {'type': 'global', 'messages': formatted_history}, room=request.sid)
     elif chat_type == 'private':
         recipient_username = data.get('username')
@@ -389,11 +394,12 @@ def handle_request_chat_history(data):
         recipient_id = recipient[0]
         user_id = session['user_id']
 
+        # Получаем историю приватного чата
         chat_history = get_chat_history(user_id, recipient_id)
         formatted_history = [{'sender': sender, 'text': msg, 'timestamp': timestamp} for msg, timestamp, sender in chat_history]
 
+        # Отправляем историю приватного чата клиенту
         emit('chat_history', {'username': recipient_username, 'messages': formatted_history, 'type': 'private'}, room=request.sid)
-        conn.close()
     else:
         emit('error', {'message': 'Неверный тип чата: ' + chat_type})
 
@@ -605,7 +611,24 @@ def handle_mark_messages_as_read(data):
     """, (recipient_id, sender_id))
     conn.commit()
     conn.close()
+@socketio.on('logout')
+def handle_logout(data):
+    username = data.get('username')
+    
+    if username:
+        # Получаем sid пользователя по его имени
+        sid_to_remove = next((sid for sid, name in active_users.items() if name == username), None)
 
+        if sid_to_remove:
+            # Удаляем пользователя из списка активных
+            active_users.pop(sid_to_remove, None)
+
+            # Оповещаем остальных пользователей, что он отключен
+            emit('user_list', list(active_users.values()), broadcast=True)
+            print(f"Пользователь {username} отключен по запросу 'logout', session ID: {sid_to_remove}")
+            
+            # Отключаем сессию
+            handle_disconnect(sid_to_remove)
 @socketio.on('disconnect')
 def handle_disconnect():
     username = active_users.pop(request.sid, None)
