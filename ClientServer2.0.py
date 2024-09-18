@@ -13,7 +13,7 @@ import jwt
 
 
 
-HOST = 'http://10.1.3.188:12345'
+HOST = 'http://10.1.3.190:12345'
 sio = socketio.Client()
 token = None
 
@@ -514,10 +514,10 @@ def private_message(data):
             private_chat_text_edit = private_chat_windows[sender]['text_edit']
 
             # Если сообщение содержит файл
-            if file_name and file_data:
-                save_file(file_name, file_data)
+            if file_name:
                 file_url = create_file_link(file_name)
                 private_chat_text_edit.append(f"{sender}: Отправлен файл: <a href='{file_url}' style='color: {USER_COLOR}; text-decoration: none;'>{file_name}</a>")
+                private_chat_text_edit.setTextInteractionFlags(Qt.TextBrowserInteraction)  # Делаем ссылки кликабельными
             else:
                 private_chat_text_edit.append(f"{sender}: {message}")
 
@@ -536,9 +536,6 @@ def private_message(data):
             unread_messages[sender] = unread_messages.get(sender, 0) + 1
 
         update_user_listbox()
-    else:
-        print(f"Чат с пользователем {sender} не открыт")
-
 @sio.event
 def message_received(data):
     sender = data.get('from')
@@ -720,7 +717,38 @@ def open_user_profile(username):
     layout.addWidget(profile_text_browser)
     profile_window.setLayout(layout)
     profile_window.exec_()
+def send_private_file(recipient_username):
+    """Открывает диалог для выбора файла и отправляет его в приватный чат частями."""
+    file_path, _ = QFileDialog.getOpenFileName(main_window, "Выберите файл")
+    if file_path:
+        file_name = os.path.basename(file_path)
+        with open(file_path, 'rb') as file:
+            file_data = file.read()
 
+        # Разбиение файла на части
+        file_size = len(file_data)
+        chunks = [file_data[i:i + CHUNK_SIZE] for i in range(0, file_size, CHUNK_SIZE)]
+
+        for index, chunk in enumerate(chunks):
+            # Отправляем файл на сервер по частям
+            sio.emit('private_file_upload_chunk', {
+                'to': recipient_username, 
+                'file_name': file_name, 
+                'file_data': chunk, 
+                'chunk_index': index,
+                'total_chunks': len(chunks),
+                'from': current_username
+            })
+
+        # Создаем ссылку на файл для отправителя
+        file_url = create_file_link(file_name)
+        # Используем HTML для создания кликабельной ссылки
+        html_link = f"<a href='{file_url}' style='color: {USER_COLOR}; text-decoration: none;'>{file_name}</a>"
+        private_chat_windows[recipient_username]['text_edit'].append(
+            f"Вы отправили файл: {html_link}"
+        )
+        private_chat_windows[recipient_username]['text_edit'].setTextInteractionFlags(Qt.TextBrowserInteraction)  # Позволяем кликать по ссылкам
+        private_chat_windows[recipient_username]['text_edit'].append("")  # Пустая строка для форматирования
 def start_private_chat(username):
     global private_chat_windows
 

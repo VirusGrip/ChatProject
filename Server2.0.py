@@ -12,7 +12,7 @@ socketio = SocketIO(app, manage_session=True)
 
 # Конфигурация загрузки файлов
 UPLOAD_FOLDER = 'uploads'
-HOST = '10.1.3.188:12345'
+HOST = '10.1.3.190:12345'
 if not os.path.exists(UPLOAD_FOLDER):
     os.makedirs(UPLOAD_FOLDER)
 
@@ -461,6 +461,43 @@ def handle_private_message(data):
         emit('error', {'message': 'Ошибка: Получатель не найден в базе данных'})
 
     conn.close()
+@socketio.on('private_file_upload_chunk')
+def handle_private_file_upload_chunk(data):
+    file_name = data.get('file_name')
+    file_data = data.get('file_data')
+    chunk_index = data.get('chunk_index')
+    total_chunks = data.get('total_chunks')
+    recipient_username = data.get('to')
+    sender_username = data.get('from')
+
+    # Сохраняем каждый кусок файла временно
+    temp_file_path = os.path.join(UPLOAD_FOLDER, f"{file_name}.part{chunk_index}")
+    with open(temp_file_path, 'wb') as f:
+        f.write(file_data)
+
+    # Проверяем, получены ли все части
+    if chunk_index + 1 == total_chunks:
+        # Собираем файл
+        final_file_path = os.path.join(UPLOAD_FOLDER, file_name)
+        with open(final_file_path, 'wb') as final_file:
+            for i in range(total_chunks):
+                part_file_path = os.path.join(UPLOAD_FOLDER, f"{file_name}.part{i}")
+                with open(part_file_path, 'rb') as part_file:
+                    final_file.write(part_file.read())
+                os.remove(part_file_path)  # Удаляем временные части
+
+        # Создаем URL для файла
+        file_url = f"http://{HOST}/uploads/{file_name}"
+
+        # Отправляем сообщение получателю через WebSocket
+        recipient_sid = next((sid for sid, name in active_users.items() if name == recipient_username), None)
+        if recipient_sid:
+            emit('private_message', {
+                'from': sender_username,
+                'to': recipient_username,
+                'file_name': file_name,
+                'file_url': file_url
+            }, room=recipient_sid)
 
 @socketio.on('file_upload_chunk')
 def handle_file_upload_chunk(data):
@@ -639,4 +676,4 @@ def handle_disconnect(sid=None):
 
 if __name__ == '__main__':
     init_db()
-    socketio.run(app, host='10.1.3.188', port=12345)
+    socketio.run(app, host='10.1.3.190', port=12345)
