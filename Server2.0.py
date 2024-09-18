@@ -8,7 +8,7 @@ import jwt
 
 app = Flask(__name__)
 app.secret_key = '12345678'
-socketio = SocketIO(app, manage_session=True)
+socketio = SocketIO(app, async_mode='gevent', manage_session=True)
 
 # Конфигурация загрузки файлов
 UPLOAD_FOLDER = 'uploads'
@@ -248,6 +248,7 @@ def get_all_users():
 
 @socketio.on('connect')
 def handle_connect():
+    print("Пользователь подключен через WebSocket")
     token = request.headers.get('Authorization')
     if token:
         try:
@@ -364,20 +365,81 @@ def handle_global_message(data):
             conn.close()
     else:
         emit('error', {'message': 'Ошибка: Вы не авторизованы или текст сообщения пустой'})
+@app.route('/send_message', methods=['POST'])
+def send_message():
+    data = request.json
+    username = data.get('sender')
+    message_text = data.get('text')
+    chat_type = data.get('type', 'global')
 
+    if not username or not message_text:
+        return jsonify({"message": "Отправитель или текст сообщения не указаны"}), 400
+
+    conn, cur = get_db()
+
+    if chat_type == 'global':
+        # Получаем ID пользователя
+        cur.execute("SELECT id FROM users WHERE username = ?", (username,))
+        user = cur.fetchone()
+
+        if not user:
+            return jsonify({"message": "Пользователь не найден"}), 404
+
+        user_id = user[0]
+
+        # Сохраняем сообщение в базе данных
+        cur.execute("INSERT INTO global_messages (user_id, message) VALUES (?, ?)", (user_id, message_text))
+        conn.commit()
+        conn.close()
+
+        # Оповещаем всех пользователей
+        socketio.emit('global_message', {'sender': username, 'text': message_text}, room='global_room')
+
+    return jsonify({"message": "Сообщение отправлено"}), 200
+
+@app.route('/request_chat_history', methods=['GET'])
+def handle_chat_history_http():
+    chat_type = request.args.get('type', 'global')
+    
+    if chat_type == 'global':
+        # Получаем историю общего чата
+        chat_history = get_global_chat_history()
+        formatted_history = [{'sender': sender, 'text': message, 'timestamp': timestamp} for sender, message, timestamp in chat_history]
+        return jsonify({'type': 'global', 'messages': formatted_history}), 200
+    
+    elif chat_type == 'private':
+        recipient_username = request.args.get('username')
+        if not recipient_username:
+            return jsonify({'message': 'Пользователь не указан'}), 400
+
+        conn, cur = get_db()
+        cur.execute("SELECT id FROM users WHERE username = ?", (recipient_username,))
+        recipient = cur.fetchone()
+
+        if not recipient:
+            return jsonify({'message': 'Пользователь не найден'}), 404
+
+        recipient_id = recipient[0]
+        user_id = session.get('user_id')
+
+        # Получаем историю приватного чата
+        chat_history = get_chat_history(user_id, recipient_id)
+        formatted_history = [{'sender': sender, 'text': msg, 'timestamp': timestamp} for msg, timestamp, sender in chat_history]
+        
+        return jsonify({'username': recipient_username, 'messages': formatted_history, 'type': 'private'}), 200
+
+    return jsonify({'message': 'Неверный тип чата'}), 400
+
+# Обработчик WebSocket-сообщений остается без изменений
 @socketio.on('request_chat_history')
 def handle_request_chat_history(data):
     chat_type = data.get('type')
 
     if chat_type == 'global':
-        # Получаем историю общего чата
         chat_history = get_global_chat_history()
-        
-        # Форматируем сообщения для отправки клиенту
         formatted_history = [{'sender': sender, 'text': message, 'timestamp': timestamp} for sender, message, timestamp in chat_history]
-        
-        # Отправляем историю общего чата клиенту
         emit('chat_history', {'type': 'global', 'messages': formatted_history}, room=request.sid)
+    
     elif chat_type == 'private':
         recipient_username = data.get('username')
         if not recipient_username:
@@ -399,7 +461,6 @@ def handle_request_chat_history(data):
         chat_history = get_chat_history(user_id, recipient_id)
         formatted_history = [{'sender': sender, 'text': msg, 'timestamp': timestamp} for msg, timestamp, sender in chat_history]
 
-        # Отправляем историю приватного чата клиенту
         emit('chat_history', {'username': recipient_username, 'messages': formatted_history, 'type': 'private'}, room=request.sid)
     else:
         emit('error', {'message': 'Неверный тип чата: ' + chat_type})
