@@ -13,7 +13,7 @@ import jwt
 
 
 
-HOST = 'http://10.1.3.190:12345'
+HOST = 'http://192.168.1.127:12345'
 sio = socketio.Client()
 token = None
 
@@ -233,8 +233,8 @@ def send_private_file(recipient_username):
         file_size = len(file_data)
         chunks = [file_data[i:i + CHUNK_SIZE] for i in range(0, file_size, CHUNK_SIZE)]
 
+        # Отправляем файл на сервер по частям
         for index, chunk in enumerate(chunks):
-            # Отправляем файл на сервер по частям
             sio.emit('private_file_upload_chunk', {
                 'to': recipient_username, 
                 'file_name': file_name, 
@@ -244,11 +244,14 @@ def send_private_file(recipient_username):
                 'from': current_username
             })
 
-        # Сообщение об успешной отправке
+        # Создаем ссылку на файл для отправителя
         file_url = create_file_link(file_name)
+        # Используем HTML для создания кликабельной ссылки
+        html_link = f"<a href='{file_url}' style='color: {USER_COLOR}; text-decoration: none;'>{file_name}</a>"
         private_chat_windows[recipient_username]['text_edit'].append(
-            f"Вы отправили файл: <a href='{file_url}' style='color: {USER_COLOR}; text-decoration: none;'>{file_name}</a>"
+            f"Вы отправили файл: {html_link}"
         )
+        private_chat_windows[recipient_username]['text_edit'].setTextInteractionFlags(Qt.TextBrowserInteraction)  # Позволяем кликать по ссылкам
         private_chat_windows[recipient_username]['text_edit'].append("")  # Пустая строка для форматирования
 
 
@@ -500,24 +503,29 @@ def handle_link_click(event):
 
 @sio.event
 def private_message(data):
+    """Обрабатывает приватные сообщения, включая файлы и текст."""
     sender = data.get('from')
     recipient = data.get('to')
     message = data.get('text')
     file_name = data.get('file_name')
-    file_data = data.get('file_data')
+    file_url = data.get('file_url')
 
+    # Проверка, что сообщение не отправлено самим пользователем
     if sender == current_username:
         return
 
+    # Если это сообщение отправлено текущему пользователю
     if recipient == current_username:
         if sender in private_chat_windows and private_chat_windows[sender]['window'].isVisible():
             private_chat_text_edit = private_chat_windows[sender]['text_edit']
 
             # Если сообщение содержит файл
-            if file_name:
-                file_url = create_file_link(file_name)
-                private_chat_text_edit.append(f"{sender}: Отправлен файл: <a href='{file_url}' style='color: {USER_COLOR}; text-decoration: none;'>{file_name}</a>")
-                private_chat_text_edit.setTextInteractionFlags(Qt.TextBrowserInteraction)  # Делаем ссылки кликабельными
+            if file_url:
+                # Извлекаем имя файла из URL
+                extracted_file_name = file_url.split('/')[-1]  # Извлекаем имя файла из URL
+                # Отображаем кликабельное имя файла
+                link_html = f"<a href='{file_url}' style='color: {USER_COLOR}; text-decoration: none;'>{extracted_file_name}</a>"
+                private_chat_text_edit.append(f"{sender}: Отправлен файл: {link_html}")
             else:
                 private_chat_text_edit.append(f"{sender}: {message}")
 
@@ -525,16 +533,16 @@ def private_message(data):
             scrollbar = private_chat_text_edit.verticalScrollBar()
             scrollbar.setValue(scrollbar.maximum())
 
-            # Если окно чата с этим пользователем активно, не увеличиваем счетчик непрочитанных сообщений
+            # Если окно чата активно, сбросить счетчик непрочитанных сообщений
             if private_chat_windows[sender]['window'].isVisible() and private_chat_windows[sender]['window'].isActiveWindow():
                 unread_messages[sender] = 0
             else:
                 unread_messages[sender] += 1
-
         else:
-            # Увеличиваем счетчик непрочитанных сообщений, так как окно чата не активно или не существует
+            # Увеличить счетчик непрочитанных сообщений
             unread_messages[sender] = unread_messages.get(sender, 0) + 1
 
+        # Обновить список пользователей
         update_user_listbox()
 @sio.event
 def message_received(data):
@@ -588,6 +596,7 @@ def chat_history(data):
             text = msg.get('text', '')
             file_name = msg.get('file_name', None)
             if file_name:
+                # Используем только имя файла
                 link_html = f"<a href='{msg.get('file_path')}' style='color: {USER_COLOR}; text-decoration: none;'>{file_name}</a>"
                 text_edit.append(f"{sender}: Отправлен файл: {link_html}")
             else:

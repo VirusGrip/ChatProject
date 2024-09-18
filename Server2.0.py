@@ -12,7 +12,7 @@ socketio = SocketIO(app, manage_session=True)
 
 # Конфигурация загрузки файлов
 UPLOAD_FOLDER = 'uploads'
-HOST = '10.1.3.190:12345'
+HOST = '192.168.1.127:12345'
 if not os.path.exists(UPLOAD_FOLDER):
     os.makedirs(UPLOAD_FOLDER)
 
@@ -128,13 +128,14 @@ def upload_file():
 
     filename = secure_filename(file.filename)
     file_path = os.path.join(UPLOAD_FOLDER, filename)
-    
-    print(f"Uploading file: {filename}, Path: {file_path}")
-    
+
     file.save(file_path)
 
     # Формируем URL для доступа к файлу
-    file_url = f"http://{HOST}/files/{filename}"
+    file_url = f"http://{HOST}/uploads/{filename}"
+
+    # Формируем HTML-ссылку
+    html_message = f"<a href='{file_url}' style='color: #0077ff;'>{filename}</a>"
 
     # Оповещаем через сокет
     recipient = request.form.get('to')
@@ -144,17 +145,17 @@ def upload_file():
         recipient_data = cur.fetchone()
         if recipient_data:
             recipient_id = recipient_data[0]
-            cur.execute("INSERT INTO files (user_id, recipient_id, file_path) VALUES (?, ?, ?)", 
-                        (session['user_id'], recipient_id, filename))
+
+            # Сохраняем ссылку на файл в БД как сообщение в виде HTML-ссылки
+            cur.execute("INSERT INTO private_messages (user_id, recipient_id, message) VALUES (?, ?, ?)", 
+                        (session['user_id'], recipient_id, html_message))
             conn.commit()
-            print(f"File record inserted: {filename}")
             recipient_sid = next((sid for sid, name in active_users.items() if name == recipient), None)
             if recipient_sid:
-                emit('file_received', {'from': session['username'], 'file_url': file_url}, room=recipient_sid)
+                emit('private_message', {'from': session['username'], 'text': html_message}, room=recipient_sid)
         conn.close()
 
     return jsonify({"file_url": file_url}), 200
-
 @app.route('/uploads/<filename>')
 def uploaded_file(filename):
     file_path = os.path.join(UPLOAD_FOLDER, filename)
@@ -470,14 +471,12 @@ def handle_private_file_upload_chunk(data):
     recipient_username = data.get('to')
     sender_username = data.get('from')
 
-    # Сохраняем каждый кусок файла временно
     temp_file_path = os.path.join(UPLOAD_FOLDER, f"{file_name}.part{chunk_index}")
     with open(temp_file_path, 'wb') as f:
         f.write(file_data)
 
     # Проверяем, получены ли все части
     if chunk_index + 1 == total_chunks:
-        # Собираем файл
         final_file_path = os.path.join(UPLOAD_FOLDER, file_name)
         with open(final_file_path, 'wb') as final_file:
             for i in range(total_chunks):
@@ -486,18 +485,31 @@ def handle_private_file_upload_chunk(data):
                     final_file.write(part_file.read())
                 os.remove(part_file_path)  # Удаляем временные части
 
-        # Создаем URL для файла
+        # Формируем URL для файла
         file_url = f"http://{HOST}/uploads/{file_name}"
 
-        # Отправляем сообщение получателю через WebSocket
+        # Формируем HTML-ссылку для вставки в БД
+        html_message = f"<a href='{file_url}' style='color: #0077ff;'>{file_name}</a>"
+
+        conn, cur = get_db()
+        cur.execute("SELECT id FROM users WHERE username = ?", (recipient_username,))
+        recipient = cur.fetchone()
+
+        if recipient:
+            recipient_id = recipient[0]
+            user_id = session.get('user_id')
+
+            # Сохраняем HTML-ссылку на файл в БД как сообщение
+            cur.execute("INSERT INTO private_messages (user_id, recipient_id, message) VALUES (?, ?, ?)",
+                        (user_id, recipient_id, html_message))
+            conn.commit()
+            conn.close()
+
+        # Оповещаем через сокет получателя
         recipient_sid = next((sid for sid, name in active_users.items() if name == recipient_username), None)
         if recipient_sid:
-            emit('private_message', {
-                'from': sender_username,
-                'to': recipient_username,
-                'file_name': file_name,
-                'file_url': file_url
-            }, room=recipient_sid)
+            emit('private_message', {'from': sender_username, 'file_name': file_name, 'file_url': file_url}, room=recipient_sid)
+
 
 @socketio.on('file_upload_chunk')
 def handle_file_upload_chunk(data):
@@ -676,4 +688,4 @@ def handle_disconnect(sid=None):
 
 if __name__ == '__main__':
     init_db()
-    socketio.run(app, host='10.1.3.190', port=12345)
+    socketio.run(app, host='192.168.1.127', port=12345)
