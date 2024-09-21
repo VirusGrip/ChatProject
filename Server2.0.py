@@ -2,9 +2,10 @@ from flask import Flask, request, jsonify, session, send_from_directory
 from flask_socketio import SocketIO, emit, join_room, leave_room, send
 from werkzeug.security import generate_password_hash, check_password_hash
 from werkzeug.utils import secure_filename
-import sqlite3
 import os
 import jwt
+import psycopg2
+from psycopg2.extras import RealDictCursor
 
 app = Flask(__name__)
 app.secret_key = '12345678'
@@ -16,61 +17,68 @@ HOST = '192.168.1.127:12345'
 if not os.path.exists(UPLOAD_FOLDER):
     os.makedirs(UPLOAD_FOLDER)
 
-DATABASE = 'chat.db'
+# Параметры подключения к PostgreSQL
+DATABASE_URL = 'postgresql://postgres:123@localhost:5432/my_database'
 active_users = {}  # Словарь для хранения активных пользователей и их сессий
 
+
+def get_db():
+    conn = psycopg2.connect(DATABASE_URL, cursor_factory=RealDictCursor)
+    return conn, conn.cursor()
+
+
 def init_db():
-    if not os.path.exists(DATABASE):
-        conn = sqlite3.connect(DATABASE)
-        cursor = conn.cursor()
-        cursor.execute('''
-            CREATE TABLE users (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                username TEXT UNIQUE NOT NULL,
-                password TEXT NOT NULL,
-                last_name TEXT,
-                first_name TEXT,
-                middle_name TEXT,
-                birth_date DATE,
-                work_email TEXT,
-                personal_email TEXT,
-                phone_number TEXT
-            )
-        ''')
-        cursor.execute('''
-            CREATE TABLE global_messages (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                user_id INTEGER,
-                message TEXT NOT NULL,
-                timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
-                FOREIGN KEY (user_id) REFERENCES users(id)
-            )
-        ''')
-        cursor.execute('''
-            CREATE TABLE private_messages (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                user_id INTEGER,
-                recipient_id INTEGER,
-                message TEXT NOT NULL,
-                timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
-                is_read INTEGER DEFAULT 0,
-                FOREIGN KEY (user_id) REFERENCES users(id),
-                FOREIGN KEY (recipient_id) REFERENCES users(id)
-            )
-        ''')
-        cursor.execute('''
-            CREATE TABLE files (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                user_id INTEGER,
-                recipient_id INTEGER,
-                file_path TEXT NOT NULL,
-                timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
-                FOREIGN KEY (user_id) REFERENCES users(id),
-                FOREIGN KEY (recipient_id) REFERENCES users(id)
-            )
-        ''')
-        conn.commit()
-        conn.close()
+    """Инициализация базы данных в PostgreSQL"""
+    conn, cur = get_db()
+    cur.execute('''
+        CREATE TABLE IF NOT EXISTS users (
+            id SERIAL PRIMARY KEY,
+            username TEXT UNIQUE NOT NULL,
+            password TEXT NOT NULL,
+            last_name TEXT,
+            first_name TEXT,
+            middle_name TEXT,
+            birth_date DATE,
+            work_email TEXT,
+            personal_email TEXT,
+            phone_number TEXT
+        )
+    ''')
+    cur.execute('''
+        CREATE TABLE IF NOT EXISTS global_messages (
+            id SERIAL PRIMARY KEY,
+            user_id INTEGER,
+            message TEXT NOT NULL,
+            timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (user_id) REFERENCES users(id)
+        )
+    ''')
+    cur.execute('''
+        CREATE TABLE IF NOT EXISTS private_messages (
+            id SERIAL PRIMARY KEY,
+            user_id INTEGER,
+            recipient_id INTEGER,
+            message TEXT NOT NULL,
+            timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            is_read INTEGER DEFAULT 0,
+            FOREIGN KEY (user_id) REFERENCES users(id),
+            FOREIGN KEY (recipient_id) REFERENCES users(id)
+        )
+    ''')
+    cur.execute('''
+        CREATE TABLE IF NOT EXISTS files (
+            id SERIAL PRIMARY KEY,
+            user_id INTEGER,
+            recipient_id INTEGER,
+            file_path TEXT NOT NULL,
+            timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (user_id) REFERENCES users(id),
+            FOREIGN KEY (recipient_id) REFERENCES users(id)
+        )
+    ''')
+    conn.commit()
+    conn.close()
+
 
 @app.route('/check_token', methods=['GET'])
 def check_token():
@@ -86,9 +94,6 @@ def check_token():
     except jwt.InvalidTokenError:
         return jsonify({"message": "Неверный токен"}), 401
 
-def get_db():
-    conn = sqlite3.connect(DATABASE)
-    return conn, conn.cursor()
 
 def get_chat_history(user_id, recipient_id):
     """Получаем историю приватного чата между двумя пользователями, включая ссылки на файлы."""
@@ -97,15 +102,17 @@ def get_chat_history(user_id, recipient_id):
         SELECT private_messages.message, private_messages.timestamp, sender.username as sender
         FROM private_messages
         JOIN users AS sender ON private_messages.user_id = sender.id
-        WHERE (private_messages.user_id = ? AND private_messages.recipient_id = ?)
-           OR (private_messages.user_id = ? AND private_messages.recipient_id = ?)
+        WHERE (private_messages.user_id = %s AND private_messages.recipient_id = %s)
+           OR (private_messages.user_id = %s AND private_messages.recipient_id = %s)
         ORDER BY private_messages.timestamp ASC
     """, (user_id, recipient_id, recipient_id, user_id))
     chat_history = cur.fetchall()
     conn.close()
     return chat_history
 
+
 def get_global_chat_history():
+    """Получаем историю глобального чата."""
     conn, cur = get_db()
     cur.execute("""
         SELECT users.username, global_messages.message, global_messages.timestamp
@@ -116,6 +123,7 @@ def get_global_chat_history():
     chat_history = cur.fetchall()
     conn.close()
     return chat_history
+
 
 @app.route('/upload', methods=['POST'])
 def upload_file():
@@ -141,21 +149,24 @@ def upload_file():
     recipient = request.form.get('to')
     if recipient:
         conn, cur = get_db()
-        cur.execute("SELECT id FROM users WHERE username = ?", (recipient,))
+        cur.execute("SELECT id FROM users WHERE username = %s", (recipient,))
         recipient_data = cur.fetchone()
         if recipient_data:
-            recipient_id = recipient_data[0]
+            recipient_id = recipient_data['id']
 
             # Сохраняем ссылку на файл в БД как сообщение в виде HTML-ссылки
-            cur.execute("INSERT INTO private_messages (user_id, recipient_id, message) VALUES (?, ?, ?)", 
+            cur.execute("INSERT INTO private_messages (user_id, recipient_id, message) VALUES (%s, %s, %s)",
                         (session['user_id'], recipient_id, html_message))
             conn.commit()
+
             recipient_sid = next((sid for sid, name in active_users.items() if name == recipient), None)
             if recipient_sid:
                 emit('private_message', {'from': session['username'], 'text': html_message}, room=recipient_sid)
         conn.close()
 
     return jsonify({"file_url": file_url}), 200
+
+
 @app.route('/uploads/<filename>')
 def uploaded_file(filename):
     file_path = os.path.join(UPLOAD_FOLDER, filename)
@@ -164,14 +175,6 @@ def uploaded_file(filename):
     else:
         return jsonify({"message": "File not found"}), 404
 
-@app.route('/uploads/<filename>')
-def download_file(filename):
-    return send_from_directory('uploads', filename)
-    
-@socketio.on('file_received')
-def handle_file_received(data):
-    file_url = f"http://{HOST}/files/{data['file_path']}"
-    emit('file_received', {'from': data['from'], 'file_url': file_url}, room=request.sid)
 
 @app.route('/register', methods=['POST'])
 def register():
@@ -191,8 +194,7 @@ def register():
             INSERT INTO users (
                 username, password, last_name, first_name, middle_name, birth_date,
                 work_email, personal_email, phone_number
-            )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
         ''', (
             username, hashed_password, data['last_name'], data['first_name'],
             data['middle_name'], data.get('birth_date'), data.get('work_email'),
@@ -200,7 +202,8 @@ def register():
         ))
         conn.commit()
         return jsonify({'message': 'Регистрация успешна!'}), 201
-    except sqlite3.IntegrityError:
+    except psycopg2.IntegrityError:
+        conn.rollback()
         return jsonify({'message': 'Пользователь с таким логином уже существует'}), 400
     finally:
         conn.close()
@@ -213,15 +216,16 @@ def login():
     password = data['password']
 
     conn, cur = get_db()
-    cur.execute("SELECT * FROM users WHERE username = ?", (username,))
+    cur.execute("SELECT * FROM users WHERE username = %s", (username,))
     user = cur.fetchone()
     conn.close()
 
-    if user and check_password_hash(user[2], password):
-        token = jwt.encode({'user_id': user[0], 'username': username}, app.secret_key, algorithm='HS256')
+    if user and check_password_hash(user['password'], password):
+        token = jwt.encode({'user_id': user['id'], 'username': username}, app.secret_key, algorithm='HS256')
         return jsonify({'token': token}), 200
     else:
         return jsonify({'message': 'Неправильный логин или пароль'}), 400
+
 
 @app.route('/all_users', methods=['GET'])
 def get_all_users():
@@ -231,23 +235,23 @@ def get_all_users():
     conn.close()
 
     user_dict = {
-        user[1]: {
-            'id': user[0],
-            'last_name': user[2],
-            'first_name': user[3],
-            'middle_name': user[4],
-            'birth_date': user[5],
-            'work_email': user[6],
-            'personal_email': user[7],
-            'phone_number': user[8]
-        } 
+        user['username']: {
+            'id': user['id'],
+            'last_name': user['last_name'],
+            'first_name': user['first_name'],
+            'middle_name': user['middle_name'],
+            'birth_date': user['birth_date'],
+            'work_email': user['work_email'],
+            'personal_email': user['personal_email'],
+            'phone_number': user['phone_number']
+        }
         for user in users
     }
     return jsonify({'users': user_dict}), 200
 
 
 @socketio.on('connect')
-def handle_connect():
+def handle_connect(auth):  # Добавляем аргумент
     print("Пользователь подключен через WebSocket")
     token = request.headers.get('Authorization')
     if token:
@@ -264,44 +268,45 @@ def handle_connect():
             # Получаем всех пользователей
             cur.execute("SELECT id, username, last_name, first_name, middle_name, birth_date, work_email, personal_email, phone_number FROM users")
             users = cur.fetchall()
+
+            # Преобразуем дату в строку перед сериализацией
             user_dict = {
-                user[1]: {
-                    'id': user[0],
-                    'last_name': user[2],
-                    'first_name': user[3],
-                    'middle_name': user[4],
-                    'birth_date': user[5],
-                    'work_email': user[6],
-                    'personal_email': user[7],
-                    'phone_number': user[8]
-                } 
+                user['username']: {
+                    'id': user['id'],
+                    'last_name': user['last_name'],
+                    'first_name': user['first_name'],
+                    'middle_name': user['middle_name'],
+                    'birth_date': user['birth_date'].strftime('%Y-%m-%d') if user['birth_date'] else None,
+                    'work_email': user['work_email'],
+                    'personal_email': user['personal_email'],
+                    'phone_number': user['phone_number']
+                }
                 for user in users
             }
 
             emit('all_users', user_dict, to=request.sid)
 
-            # Получаем количество непрочитанных сообщений для текущего пользователя
+            # Остальная логика остается прежней
             cur.execute("""
                 SELECT users.username, COUNT(private_messages.id) as unread_count
                 FROM private_messages
                 JOIN users ON users.id = private_messages.user_id
-                WHERE private_messages.recipient_id = ? AND private_messages.is_read = 0
+                WHERE private_messages.recipient_id = %s AND private_messages.is_read = 0
                 GROUP BY users.username
             """, (session['user_id'],))
             unread_counts = cur.fetchall()
-            unread_counts_dict = {username: count for username, count in unread_counts}
+            unread_counts_dict = {row['username']: row['unread_count'] for row in unread_counts}
             emit('unread_counts', unread_counts_dict, room=request.sid)
 
-            # Отправляем только непрочитанные сообщения
             cur.execute("""
                 SELECT message, users.username 
                 FROM private_messages 
                 JOIN users ON users.id = private_messages.user_id 
-                WHERE recipient_id = ? AND is_read = 0
+                WHERE recipient_id = %s AND is_read = 0
             """, (session['user_id'],))
             unread_messages = cur.fetchall()
-            for msg, sender in unread_messages:
-                emit('private_message', {'from': sender, 'to': session['username'], 'text': msg})
+            for msg in unread_messages:
+                emit('private_message', {'from': msg['username'], 'to': session['username'], 'text': msg['message']})
 
             conn.close()
 
@@ -313,6 +318,7 @@ def handle_connect():
             emit('error', {'message': 'Неверный токен'})
     else:
         emit('error', {'message': 'Необходим токен для подключения'})
+
 
 @socketio.on('file_upload')
 def handle_file_upload(data):
@@ -339,7 +345,7 @@ def handle_file_upload(data):
 
         # Сохраняем сообщение как HTML-ссылку
         conn, cur = get_db()
-        cur.execute("INSERT INTO global_messages (user_id, message) VALUES (?, ?)", (user_id, html_message))
+        cur.execute("INSERT INTO global_messages (user_id, message) VALUES (%s, %s)", (user_id, html_message))
         conn.commit()
         conn.close()
 
@@ -349,6 +355,7 @@ def handle_file_upload(data):
     except Exception as e:
         emit('error', {'message': f'Ошибка сохранения файла: {str(e)}'})
 
+
 @socketio.on('global_message')
 def handle_global_message(data):
     username = session.get('username')
@@ -356,15 +363,18 @@ def handle_global_message(data):
 
     if username and message_text:
         emit('global_message', {'sender': username, 'text': message_text}, room='global_room')
+
         # Сохраняем сообщение в базе данных
         user_id = session.get('user_id')
         if user_id:
             conn, cur = get_db()
-            cur.execute("INSERT INTO global_messages (user_id, message) VALUES (?, ?)", (user_id, message_text))
+            cur.execute("INSERT INTO global_messages (user_id, message) VALUES (%s, %s)", (user_id, message_text))
             conn.commit()
             conn.close()
     else:
         emit('error', {'message': 'Ошибка: Вы не авторизованы или текст сообщения пустой'})
+
+
 @app.route('/send_message', methods=['POST'])
 def send_message():
     data = request.json
@@ -379,16 +389,16 @@ def send_message():
 
     if chat_type == 'global':
         # Получаем ID пользователя
-        cur.execute("SELECT id FROM users WHERE username = ?", (username,))
+        cur.execute("SELECT id FROM users WHERE username = %s", (username,))
         user = cur.fetchone()
 
         if not user:
             return jsonify({"message": "Пользователь не найден"}), 404
 
-        user_id = user[0]
+        user_id = user['id']
 
         # Сохраняем сообщение в базе данных
-        cur.execute("INSERT INTO global_messages (user_id, message) VALUES (?, ?)", (user_id, message_text))
+        cur.execute("INSERT INTO global_messages (user_id, message) VALUES (%s, %s)", (user_id, message_text))
         conn.commit()
         conn.close()
 
@@ -397,40 +407,41 @@ def send_message():
 
     return jsonify({"message": "Сообщение отправлено"}), 200
 
+
 @app.route('/request_chat_history', methods=['GET'])
 def handle_chat_history_http():
     chat_type = request.args.get('type', 'global')
-    
+
     if chat_type == 'global':
         # Получаем историю общего чата
         chat_history = get_global_chat_history()
         formatted_history = [{'sender': sender, 'text': message, 'timestamp': timestamp} for sender, message, timestamp in chat_history]
         return jsonify({'type': 'global', 'messages': formatted_history}), 200
-    
+
     elif chat_type == 'private':
         recipient_username = request.args.get('username')
         if not recipient_username:
             return jsonify({'message': 'Пользователь не указан'}), 400
 
         conn, cur = get_db()
-        cur.execute("SELECT id FROM users WHERE username = ?", (recipient_username,))
+        cur.execute("SELECT id FROM users WHERE username = %s", (recipient_username,))
         recipient = cur.fetchone()
 
         if not recipient:
             return jsonify({'message': 'Пользователь не найден'}), 404
 
-        recipient_id = recipient[0]
+        recipient_id = recipient['id']
         user_id = session.get('user_id')
 
         # Получаем историю приватного чата
         chat_history = get_chat_history(user_id, recipient_id)
         formatted_history = [{'sender': sender, 'text': msg, 'timestamp': timestamp} for msg, timestamp, sender in chat_history]
-        
+
         return jsonify({'username': recipient_username, 'messages': formatted_history, 'type': 'private'}), 200
 
     return jsonify({'message': 'Неверный тип чата'}), 400
 
-# Обработчик WebSocket-сообщений остается без изменений
+
 @socketio.on('request_chat_history')
 def handle_request_chat_history(data):
     chat_type = data.get('type')
@@ -439,7 +450,7 @@ def handle_request_chat_history(data):
         chat_history = get_global_chat_history()
         formatted_history = [{'sender': sender, 'text': message, 'timestamp': timestamp} for sender, message, timestamp in chat_history]
         emit('chat_history', {'type': 'global', 'messages': formatted_history}, room=request.sid)
-    
+
     elif chat_type == 'private':
         recipient_username = data.get('username')
         if not recipient_username:
@@ -447,14 +458,14 @@ def handle_request_chat_history(data):
             return
 
         conn, cur = get_db()
-        cur.execute("SELECT id FROM users WHERE username = ?", (recipient_username,))
+        cur.execute("SELECT id FROM users WHERE username = %s", (recipient_username,))
         recipient = cur.fetchone()
 
         if not recipient:
             emit('error', {'message': 'Пользователь не найден'})
             return
 
-        recipient_id = recipient[0]
+        recipient_id = recipient['id']
         user_id = session['user_id']
 
         # Получаем историю приватного чата
@@ -465,20 +476,6 @@ def handle_request_chat_history(data):
     else:
         emit('error', {'message': 'Неверный тип чата: ' + chat_type})
 
-@socketio.on('select_user')
-def handle_select_user(data):
-    selected_user = data.get('username')
-    if not selected_user:
-        send("Ошибка: Пользователь не выбран", to=request.sid)
-        return
-
-    selected_sid = next((sid for sid, name in active_users.items() if name == selected_user), None)
-    if selected_sid:
-        room = f"room_{min(session['username'], selected_user)}_{max(session['username'], selected_user)}"
-        join_room(room)
-        emit('chat_started', {'room': room, 'username': selected_user}, room=request.sid)
-    else:
-        send("Ошибка: Пользователь не найден", to=request.sid)
 
 @socketio.on('private_message')
 def handle_private_message(data):
@@ -498,24 +495,24 @@ def handle_private_message(data):
     # Если получатель подключен, отправляем ему сообщение
     if recipient_sid:
         emit('private_message', {'from': username, 'to': recipient, 'text': message_text}, room=recipient_sid)
-    
+
     user_id = session.get('user_id')
     conn, cur = get_db()
-    cur.execute("SELECT id FROM users WHERE username = ?", (recipient,))
+    cur.execute("SELECT id FROM users WHERE username = %s", (recipient,))
     recipient_data = cur.fetchone()
 
     if recipient_data:
-        recipient_id = recipient_data[0]
-        cur.execute("INSERT INTO private_messages (user_id, recipient_id, message, is_read) VALUES (?, ?, ?, 0)", 
+        recipient_id = recipient_data['id']
+        cur.execute("INSERT INTO private_messages (user_id, recipient_id, message, is_read) VALUES (%s, %s, %s, 0)",
                     (user_id, recipient_id, message_text))
         conn.commit()
 
         # Обновляем количество непрочитанных сообщений для получателя
         cur.execute("""
             SELECT COUNT(id) FROM private_messages
-            WHERE recipient_id = ? AND is_read = 0
+            WHERE recipient_id = %s AND is_read = 0
         """, (recipient_id,))
-        unread_count = cur.fetchone()[0]
+        unread_count = cur.fetchone()['count']
 
         if recipient_sid:
             emit('unread_counts', {recipient: unread_count}, room=recipient_sid)
@@ -523,6 +520,8 @@ def handle_private_message(data):
         emit('error', {'message': 'Ошибка: Получатель не найден в базе данных'})
 
     conn.close()
+
+
 @socketio.on('private_file_upload_chunk')
 def handle_private_file_upload_chunk(data):
     file_name = data.get('file_name')
@@ -553,15 +552,15 @@ def handle_private_file_upload_chunk(data):
         html_message = f"<a href='{file_url}' style='color: #0077ff;'>{file_name}</a>"
 
         conn, cur = get_db()
-        cur.execute("SELECT id FROM users WHERE username = ?", (recipient_username,))
+        cur.execute("SELECT id FROM users WHERE username = %s", (recipient_username,))
         recipient = cur.fetchone()
 
         if recipient:
-            recipient_id = recipient[0]
+            recipient_id = recipient['id']
             user_id = session.get('user_id')
 
             # Сохраняем HTML-ссылку на файл в БД как сообщение
-            cur.execute("INSERT INTO private_messages (user_id, recipient_id, message) VALUES (?, ?, ?)",
+            cur.execute("INSERT INTO private_messages (user_id, recipient_id, message) VALUES (%s, %s, %s)",
                         (user_id, recipient_id, html_message))
             conn.commit()
             conn.close()
@@ -606,13 +605,13 @@ def handle_file_upload_chunk(data):
 
         # Сохраняем информацию о файле в базе данных
         conn, cur = get_db()
-        cur.execute("SELECT id FROM users WHERE username = ?", (sender_username,))
-        user_id = cur.fetchone()[0]
+        cur.execute("SELECT id FROM users WHERE username = %s", (sender_username,))
+        user_id = cur.fetchone()['id']
 
         html_message = f"<a href='{file_url}' style='color: #0077ff;'>{file_name}</a>"
 
         # Сохраняем сообщение как HTML-ссылку в таблицу global_messages
-        cur.execute("INSERT INTO global_messages (user_id, message) VALUES (?, ?)", (user_id, html_message))
+        cur.execute("INSERT INTO global_messages (user_id, message) VALUES (%s, %s)", (user_id, html_message))
         conn.commit()
 
         conn.close()
@@ -623,6 +622,7 @@ def handle_file_upload_chunk(data):
             'text': html_message
         }, room='global_room')
 
+
 @socketio.on('start_private_chat')
 def handle_start_private_chat(data):
     recipient_username = data.get('username')
@@ -631,14 +631,14 @@ def handle_start_private_chat(data):
         return
 
     conn, cur = get_db()
-    cur.execute("SELECT id FROM users WHERE username = ?", (recipient_username,))
+    cur.execute("SELECT id FROM users WHERE username = %s", (recipient_username,))
     recipient = cur.fetchone()
 
     if not recipient:
         emit('error', {'message': 'Пользователь не найден'})
         return
 
-    recipient_id = recipient[0]
+    recipient_id = recipient['id']
     user_id = session['user_id']
 
     # Получаем историю чата
@@ -652,71 +652,37 @@ def handle_start_private_chat(data):
     cur.execute("""
         SELECT id, is_read, message 
         FROM private_messages 
-        WHERE recipient_id = ? AND user_id = ? AND is_read = 0
+        WHERE recipient_id = %s AND user_id = %s AND is_read = 0
     """, (user_id, recipient_id))
     unread_messages = cur.fetchall()
     print(f"Messages to be marked as read: {unread_messages}")
 
-    # Упростим запрос на обновление, чтобы изолировать проблему
+    # Обновляем статус прочитанных сообщений
     cur.execute("""
         UPDATE private_messages 
         SET is_read = 1 
-        WHERE recipient_id = ? AND user_id = ? AND is_read = 0
+        WHERE recipient_id = %s AND user_id = %s AND is_read = 0
     """, (user_id, recipient_id))
 
-    # Проверим, сколько строк было обновлено
     print(f"Messages marked as read: {cur.rowcount}")
-    
-    # Сохраняем изменения
     conn.commit()
-    print("Changes committed to the database.")
 
     # Обновляем количество непрочитанных сообщений на клиенте
     cur.execute("""
         SELECT COUNT(id) 
         FROM private_messages 
-        WHERE recipient_id = ? AND is_read = 0
+        WHERE recipient_id = %s AND is_read = 0
     """, (user_id,))
-    unread_count = cur.fetchone()[0]
+    unread_count = cur.fetchone()['count']
     emit('unread_counts', {recipient_username: unread_count}, room=request.sid)
 
     conn.close()
-@socketio.on('mark_messages_as_read')
-def handle_mark_messages_as_read(data):
-    recipient_username = session.get('username')
-    sender_username = data.get('username')
 
-    if not recipient_username or not sender_username:
-        emit('error', {'message': 'Ошибка: Пользователь не найден'})
-        return
 
-    # Получение ID пользователей
-    conn, cur = get_db()
-    cur.execute("SELECT id FROM users WHERE username = ?", (sender_username,))
-    sender = cur.fetchone()
-
-    cur.execute("SELECT id FROM users WHERE username = ?", (recipient_username,))
-    recipient = cur.fetchone()
-
-    if not sender or not recipient:
-        emit('error', {'message': 'Ошибка: Пользователь не найден'})
-        return
-
-    sender_id = sender[0]
-    recipient_id = recipient[0]
-
-    # Обновление статуса сообщений как прочитанных
-    cur.execute("""
-        UPDATE private_messages 
-        SET is_read = 1 
-        WHERE recipient_id = ? AND user_id = ? AND is_read = 0
-    """, (recipient_id, sender_id))
-    conn.commit()
-    conn.close()
 @socketio.on('logout')
 def handle_logout(data):
     username = data.get('username')
-    
+
     if username:
         # Получаем sid пользователя по его имени
         sid_to_remove = next((sid for sid, name in active_users.items() if name == username), None)
@@ -728,16 +694,17 @@ def handle_logout(data):
             # Оповещаем остальных пользователей, что он отключен
             emit('user_list', list(active_users.values()), broadcast=True)
             print(f"Пользователь {username} отключен по запросу 'logout', session ID: {sid_to_remove}")
-            
+
             # Отключаем сессию, передаем sid
             handle_disconnect(sid_to_remove)
+
+
 @socketio.on('disconnect')
 def handle_disconnect(sid=None):
     """Обработчик отключения пользователя."""
-    # Если sid передан явно, используем его, иначе используем request.sid
     if sid is None:
         sid = request.sid
-        
+
     username = active_users.pop(sid, None)
     if username:
         emit('user_list', list(active_users.values()), broadcast=True)
@@ -746,6 +713,7 @@ def handle_disconnect(sid=None):
         for room in list(socketio.server.manager.rooms.keys()):
             if room.startswith(f"room_{username}_") or room.endswith(f"_{username}"):
                 leave_room(room)
+
 
 if __name__ == '__main__':
     init_db()
