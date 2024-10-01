@@ -188,9 +188,11 @@ def get_global_chat_history():
         ORDER BY global_messages.timestamp ASC
     """)
     chat_history = cur.fetchall()
+    # Преобразуем datetime в строку перед возвращением
+    formatted_history = [(username, message, str(timestamp)) for username, message, timestamp in chat_history]
     cur.close()
     conn.close()
-    return chat_history
+    return formatted_history
 
 @app.route('/register', methods=['POST'])
 def register():
@@ -254,7 +256,13 @@ def get_global_chat_history():
     cur.close()
     conn.close()
     return chat_history
-
+@app.route('/uploads/<path:filename>', methods=['GET'])
+def download_file(filename):
+    """Обрабатывает запросы для скачивания файлов из папки uploads."""
+    try:
+        return send_from_directory(UPLOAD_FOLDER, filename, as_attachment=False)
+    except FileNotFoundError:
+        return jsonify({"message": "Файл не найден"}), 404
 @app.route('/upload', methods=['POST'])
 def upload_file():
     if 'file' not in request.files:
@@ -438,6 +446,70 @@ def handle_private_message(data):
 
     cur.close()
     conn.close()
+
+@socketio.on('private_file_upload_chunk')
+def handle_private_file_upload_chunk(data):
+    """Обрабатывает получение части файла для приватного чата."""
+    file_name = data.get('file_name')
+    file_data = data.get('file_data')
+    chunk_index = data.get('chunk_index')
+    total_chunks = data.get('total_chunks')
+    recipient_username = data.get('to')
+    sender_username = data.get('from')
+
+    if not file_name or not file_data or not recipient_username:
+        emit('error', {'message': 'Ошибка: данные файла отсутствуют или не указан получатель'})
+        return
+
+    # Временно сохраняем части файла
+    temp_file_path = os.path.join(UPLOAD_FOLDER, f"{file_name}.part{chunk_index}")
+    with open(temp_file_path, 'wb') as f:
+        f.write(file_data)
+
+    # Проверяем, получены ли все части файла
+    if chunk_index + 1 == total_chunks:
+        # Собираем файл
+        final_file_path = os.path.join(UPLOAD_FOLDER, file_name)
+        with open(final_file_path, 'wb') as final_file:
+            for i in range(total_chunks):
+                part_file_path = os.path.join(UPLOAD_FOLDER, f"{file_name}.part{i}")
+                with open(part_file_path, 'rb') as part_file:
+                    final_file.write(part_file.read())
+                os.remove(part_file_path)  # Удаляем временные части
+
+        # Формируем URL для файла
+        file_url = f"http://{HOST}/uploads/{file_name}"
+
+        # Сохраняем информацию о файле в базе данных
+        conn, cur = get_db()
+        cur.execute("SELECT id FROM users WHERE username = %s", (sender_username,))
+        user_id = cur.fetchone()[0]
+        cur.execute("SELECT id FROM users WHERE username = %s", (recipient_username,))
+        recipient_id = cur.fetchone()[0]
+
+        html_message = f"<a href='{file_url}' style='color: #0077ff;'>{file_name}</a>"
+
+        try:
+            # Сохраняем сообщение как HTML-ссылку в таблицу private_messages
+            cur.execute("INSERT INTO private_messages (user_id, recipient_id, message) VALUES (%s, %s, %s)", 
+                        (user_id, recipient_id, html_message))
+            conn.commit()
+
+            # Оповещаем получателя, если он в сети
+            recipient_sid = next((sid for sid, name in active_users.items() if name == recipient_username), None)
+            if recipient_sid:
+                emit('private_message', {
+                    'from': sender_username,
+                    'to': recipient_username,
+                    'text': html_message
+                }, room=recipient_sid)
+        except psycopg2.Error as e:
+            conn.rollback()
+            emit('error', {'message': 'Ошибка сохранения файла в базу данных'})
+        finally:
+            cur.close()
+            conn.close()
+
 @socketio.on('request_chat_history')
 def handle_request_chat_history(data):
     chat_type = data.get('type')
@@ -446,8 +518,8 @@ def handle_request_chat_history(data):
         # Получаем историю общего чата
         chat_history = get_global_chat_history()
         
-        # Форматируем сообщения для отправки клиенту
-        formatted_history = [{'sender': sender, 'text': message, 'timestamp': timestamp} for sender, message, timestamp in chat_history]
+        # Форматируем сообщения для отправки клиенту, преобразуя timestamp в строку
+        formatted_history = [{'sender': sender, 'text': message, 'timestamp': str(timestamp)} for sender, message, timestamp in chat_history]
         
         # Отправляем историю общего чата клиенту
         emit('chat_history', {'type': 'global', 'messages': formatted_history}, room=request.sid)
@@ -472,7 +544,7 @@ def handle_request_chat_history(data):
 
         # Получаем историю приватного чата
         chat_history = get_chat_history(user_id, recipient_id)
-        formatted_history = [{'sender': sender, 'text': msg, 'timestamp': timestamp} for msg, timestamp, sender in chat_history]
+        formatted_history = [{'sender': sender, 'text': msg, 'timestamp': str(timestamp)} for msg, timestamp, sender in chat_history]
 
         # Отправляем историю приватного чата клиенту
         emit('chat_history', {'username': recipient_username, 'messages': formatted_history, 'type': 'private'}, room=request.sid)
