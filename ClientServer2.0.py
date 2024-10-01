@@ -387,16 +387,33 @@ def login():
 
     try:
         response = requests.post(f"{HOST}/login", json={'username': username, 'password': password})
+
+        # Проверка статуса ответа
         if response.status_code == 200:
-            token = response.json().get('token')
-            current_username = username  # Сохраняем текущего пользователя
-            login_window.close()
-            save_token_and_ip(token)  # Сохраняем токен и IP после успешного входа
-            setup_main_window()
+            try:
+                # Пытаемся получить JSON-ответ
+                response_data = response.json()
+                token = response_data.get('token')
+                if token:
+                    current_username = username  # Сохраняем текущего пользователя
+                    login_window.close()
+                    save_token_and_ip(token)  # Сохраняем токен и IP после успешного входа
+                    setup_main_window()
+                else:
+                    QMessageBox.critical(login_window, "Ошибка", "Сервер не вернул токен.")
+            except ValueError:
+                # Ошибка при разборе JSON (например, сервер вернул не JSON)
+                QMessageBox.critical(login_window, "Ошибка", "Некорректный ответ от сервера.")
+                print(f"Ответ сервера: {response.text}")  # Выводим ответ для отладки
         else:
+            # Обработка случая, когда статус код не 200 OK
             QMessageBox.critical(login_window, "Ошибка", response.json().get('message', 'Неизвестная ошибка'))
-    except Exception as e:
-        QMessageBox.critical(login_window, "Ошибка", str(e))
+            print(f"Ошибка: {response.status_code} - {response.text}")  # Выводим статус и текст ответа для отладки
+
+    except requests.exceptions.RequestException as e:
+        # Обработка ошибок сети или соединения
+        QMessageBox.critical(login_window, "Ошибка", f"Ошибка сети: {str(e)}")
+        print(f"Ошибка сети: {str(e)}")
 
 def connect_socket():
     """Подключение к серверу через WebSocket."""
