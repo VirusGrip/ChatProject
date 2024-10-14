@@ -3,7 +3,7 @@ from flask import json
 import socketio
 import requests
 from PySide6.QtWidgets import QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel, QLineEdit, QTextEdit, QListWidget, QMessageBox, QDialog, QListWidgetItem, QFileDialog,  QTextBrowser, QGridLayout, QToolButton, QScrollArea, QMenu
-from PySide6.QtCore import Qt, QTimer
+from PySide6.QtCore import Qt, QTimer, Q_ARG, QMetaObject
 from PySide6.QtGui import QColor, QBrush, QTextCursor
 import webbrowser
 import urllib.parse
@@ -583,60 +583,48 @@ def message_received(data):
 @sio.event
 def chat_history(data):
     """Обработчик получения истории чатов."""
-    global history_loaded
     messages = data.get('messages', [])
     chat_type = data.get('type', 'unknown')
     username = data.get('username', '')
 
     if chat_type == 'global':
-        if not history_loaded:
-            # Обработка сообщений из общего чата
-            for msg in messages:
-                sender = msg.get('sender', 'Unknown')
-                text = msg.get('text', '')
-                file_name = msg.get('file_name', None)
-                if file_name:
-                    link_html = f"<a href='{msg.get('file_path')}' style='color: {USER_COLOR}; text-decoration: none;'>{file_name}</a>"
-                    chat_box.append(f"{sender}: Отправлен файл: {link_html}")
-                else:
-                    chat_box.append(f"{sender}: {text}")
-            
-            # Прокручиваем до самого низа
-            scrollbar = chat_box.verticalScrollBar()
-            scrollbar.setValue(scrollbar.maximum())
-            history_loaded = True
-    elif chat_type == 'private' and username in private_chat_windows:
-        # Обработка сообщений из приватных чатов
-        text_edit = private_chat_windows[username]['text_edit']
+        # Обрабатываем историю глобального чата в главном потоке
+        QMetaObject.invokeMethod(chat_box, "clear", Qt.QueuedConnection)
         for msg in messages:
             sender = msg.get('sender', 'Unknown')
             text = msg.get('text', '')
-            file_name = msg.get('file_name', None)
-            if file_name:
-                # Используем только имя файла
-                link_html = f"<a href='{msg.get('file_path')}' style='color: {USER_COLOR}; text-decoration: none;'>{file_name}</a>"
-                text_edit.append(f"{sender}: Отправлен файл: {link_html}")
-            else:
-                text_edit.append(f"{sender}: {text}")
-        
-        # Прокрутка вниз
-        scrollbar = text_edit.verticalScrollBar()
-        scrollbar.setValue(scrollbar.maximum())
+            QMetaObject.invokeMethod(chat_box, "append", Qt.QueuedConnection, Q_ARG(str, f"{sender}: {text}"))
+
+    elif chat_type == 'private' and username == current_chat_user:
+        # Обрабатываем историю приватного чата в главном потоке
+        QMetaObject.invokeMethod(chat_box, "clear", Qt.QueuedConnection)
+        for msg in messages:
+            sender = msg.get('sender', 'Unknown')
+            text = msg.get('text', '')
+            QMetaObject.invokeMethod(chat_box, "append", Qt.QueuedConnection, Q_ARG(str, f"{sender}: {text}"))
+
+    # Прокручиваем до самого низа чата в главном потоке
+    QMetaObject.invokeMethod(chat_box.verticalScrollBar(), "setValue", Qt.QueuedConnection,
+                             Q_ARG(int, chat_box.verticalScrollBar().maximum()))
+
 
 def send_message():
-    """Отправка сообщения в общий чат без его немедленного отображения."""
-    global current_username
+    """Отправка сообщения в текущий чат (глобальный или приватный)."""
+    global current_username, current_chat_type, current_chat_user
 
     text = message_entry.toPlainText().strip()
     if text:
-        message_entry.clear()  # Очищаем поле ввода
-        sio.emit('global_message', {'text': text, 'sender': current_username})
-        # Убираем строку, которая отображает сообщение сразу
-        # chat_box.append(f"{current_username}: {text}")
+        # Очищаем поле ввода в главном потоке
+        QMetaObject.invokeMethod(message_entry, "clear", Qt.QueuedConnection)
 
-        # Обновляем ползунок прокрутки
-        scrollbar = chat_box.verticalScrollBar()
-        scrollbar.setValue(scrollbar.maximum())
+        if current_chat_type == 'global':
+            sio.emit('global_message', {'text': text, 'sender': current_username})
+        elif current_chat_type == 'private':
+            sio.emit('private_message', {'to': current_chat_user, 'text': text, 'from': current_username})
+
+        # Прокручиваем ползунок в главном потоке
+        QMetaObject.invokeMethod(chat_box.verticalScrollBar(), "setValue", Qt.QueuedConnection,
+                                 Q_ARG(int, chat_box.verticalScrollBar().maximum()))
 
 def update_user_listbox():
     global user_listbox, all_user_data, unread_messages, private_chat_windows, current_username
@@ -776,92 +764,22 @@ def send_private_file(recipient_username):
         private_chat_windows[recipient_username]['text_edit'].setTextInteractionFlags(Qt.TextBrowserInteraction)  # Позволяем кликать по ссылкам
         private_chat_windows[recipient_username]['text_edit'].append("")  # Пустая строка для форматирования
 def start_private_chat(username):
-    global private_chat_windows
+    """Переключает окно на приватный чат с выбранным пользователем и загружает его историю."""
+    global current_chat_type, current_chat_user
 
-    # Если окно уже существует, просто делаем его видимым
-    if username in private_chat_windows:
-        private_chat_windows[username]['window'].show()
-        private_chat_windows[username]['window'].raise_()
-        private_chat_windows[username]['window'].activateWindow()
-        
-        # Сбрасываем количество непрочитанных сообщений при открытии окна
-        unread_messages[username] = 0
-        update_user_listbox()
-        return
+    current_chat_type = 'private'
+    current_chat_user = username
 
-    # Создаем новое окно чата
-    private_chat_window = QWidget()
-    private_chat_window.setWindowTitle(f"Личный чат с {username}")
-    private_chat_window.setStyleSheet(f"background-color: {BG_COLOR};")
+    # Очищаем текущее содержимое чата в главном потоке
+    QMetaObject.invokeMethod(chat_box, "clear", Qt.QueuedConnection)
 
-    layout = QVBoxLayout(private_chat_window)
-
-    text_edit = QTextBrowser()
-    text_edit.setOpenExternalLinks(True)  # Позволяет открывать ссылки во внешнем браузере
-    text_edit.setStyleSheet(f"""
-        background-color: {ENTRY_BG_COLOR};
-        border-radius: 10px;
-        padding: 2px;
-        color: {TEXT_COLOR};
-        border: 2px solid {BUTTON_COLOR};
-    """)
-    layout.addWidget(text_edit)
-
-    input_frame = QWidget()
-    input_layout = QHBoxLayout(input_frame)
-    
-    private_message_entry = QTextEdit()
-    private_message_entry.setStyleSheet(f"""
-        background-color: {ENTRY_BG_COLOR};
-        border-radius: 10px;
-        padding: 2px;
-        color: {TEXT_COLOR};
-        border: 2px solid {BUTTON_COLOR};
-        border-top: 3px solid {BUTTON_HOVER_COLOR};
-    """)
-    input_layout.addWidget(private_message_entry)
-    
-    send_button = QPushButton("Отправить")
-    send_button.setStyleSheet(f"background-color: {BUTTON_COLOR}; color: {TEXT_COLOR}; border-radius: 10px; padding: 10px;")
-    send_button.clicked.connect(lambda: send_private_message(username, private_message_entry))
-    input_layout.addWidget(send_button)
-    
-    send_file_button = QPushButton("Отправить файл")
-    send_file_button.setStyleSheet(f"background-color: {BUTTON_COLOR}; color: {TEXT_COLOR}; border-radius: 10px; padding: 10px;")
-    send_file_button.clicked.connect(lambda: send_private_file(username))
-    input_layout.addWidget(send_file_button)
-    
-    emoji_button = QPushButton("😀")
-    emoji_button.setStyleSheet(f"background-color: {BUTTON_COLOR}; color: {TEXT_COLOR}; border-radius: 10px; padding: 10px;")
-    emoji_button.clicked.connect(lambda: open_emoji_picker(private_message_entry))
-    input_layout.addWidget(emoji_button)
-
-    # Добавляем кнопку "Просмотр профиля"
-    view_profile_button = QPushButton("Просмотр профиля")
-    view_profile_button.setStyleSheet(f"background-color: {BUTTON_COLOR}; color: {TEXT_COLOR}; border-radius: 10px; padding: 10px;")
-    view_profile_button.clicked.connect(lambda: open_user_profile(username))
-    input_layout.addWidget(view_profile_button)
-
-    layout.addWidget(input_frame)
-
-    # Добавляем информацию об окне в глобальный словарь
-    private_chat_windows[username] = {
-        'window': private_chat_window,
-        'text_edit': text_edit,
-        'message_entry': private_message_entry
-    }
-
-    # Запрашиваем историю чата
+    # Запрашиваем историю приватного чата для выбранного пользователя
     sio.emit('request_chat_history', {'type': 'private', 'username': username})
     sio.emit('mark_messages_as_read', {'username': username})
-    # Сбрасываем количество непрочитанных сообщений при открытии окна
+
+    # Сбрасываем количество непрочитанных сообщений
     unread_messages[username] = 0
     update_user_listbox()
-
-    # Показываем окно чата
-    private_chat_window.show()
-    private_chat_window.raise_()
-    private_chat_window.activateWindow()
 
 def send_private_message(username, message_entry):
     """Отправка личного сообщения."""
@@ -912,7 +830,10 @@ def logout():
 
 def setup_main_window():
     """Настройка основного окна приложения."""
-    global main_window, chat_box, message_entry, user_listbox
+    global main_window, chat_box, message_entry, user_listbox, current_chat_type, current_chat_user
+
+    current_chat_type = 'global'  # Начнем с глобального чата
+    current_chat_user = None  # Для приватного чата
 
     main_window = QMainWindow()
     main_window.setWindowTitle("Чат")
@@ -924,14 +845,23 @@ def setup_main_window():
 
     user_frame = QWidget()
     user_layout = QVBoxLayout(user_frame)
+
+    # Кнопка возврата к глобальному чату
+    global_chat_button = QPushButton("Глобальный чат", main_window)
+    global_chat_button.setStyleSheet(f"background-color: {BUTTON_COLOR}; color: {TEXT_COLOR}; border-radius: 10px; padding: 10px;")
+    global_chat_button.clicked.connect(switch_to_global_chat)
+    user_layout.addWidget(global_chat_button)
+
     user_label = QLabel("Пользователи", main_window)
     user_label.setStyleSheet(f"color: {HEADING_COLOR}; font-weight: bold;")
     user_layout.addWidget(user_label)
+    
     user_listbox = QListWidget()
     user_listbox.setStyleSheet(f"background-color: {ENTRY_BG_COLOR}; border-radius: 10px; padding: 10px; color: {TEXT_COLOR};")
     user_listbox.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
     user_listbox.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
     user_layout.addWidget(user_listbox)
+    
     user_frame.setFixedWidth(200)
     layout.addWidget(user_frame)
 
@@ -1001,6 +931,18 @@ def setup_main_window():
 
     main_window.show()
 
+def switch_to_global_chat():
+    """Переключает окно на глобальный чат и загружает его историю."""
+    global current_chat_type, current_chat_user
+
+    current_chat_type = 'global'
+    current_chat_user = None
+
+    # Очищаем текущее содержимое чата в главном потоке
+    QMetaObject.invokeMethod(chat_box, "clear", Qt.QueuedConnection)
+
+    # Запрашиваем историю глобального чата
+    sio.emit('request_chat_history', {'type': 'global'})
 
 def open_login_window():
     """Открытие окна входа."""
