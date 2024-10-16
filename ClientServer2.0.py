@@ -466,10 +466,10 @@ def global_message(data):
         text = data['text']
         sender = data['sender']
 
-        # Добавляем сообщение только при его получении от сервера
+        # Добавляем сообщение в глобальный чат
         chat_box.append(f"{sender}: {text}")
 
-        # Обновляем ползунок прокрутки
+        # Прокручиваем чат до самого конца
         scrollbar = chat_box.verticalScrollBar()
         scrollbar.setValue(scrollbar.maximum())
 
@@ -520,19 +520,20 @@ def handle_link_click(event):
 
 @sio.event
 def private_message(data):
-    """Обрабатывает приватные сообщения, включая файлы и текст."""
+    """Обработчик для получения приватных сообщений."""
     sender = data.get('from')
     recipient = data.get('to')
     message = data.get('text')
     file_name = data.get('file_name')
     file_url = data.get('file_url')
 
-    # Проверка, что сообщение не отправлено самим пользователем
+    # Проверка на отправителя (если сообщение отправлено самим собой, не отображаем его)
     if sender == current_username:
         return
 
-    # Если это сообщение отправлено текущему пользователю
+    # Проверяем, отправлено ли сообщение текущему пользователю
     if recipient == current_username:
+        # Если приватный чат с отправителем открыт, показываем сообщение
         if sender in private_chat_windows and private_chat_windows[sender]['window'].isVisible():
             private_chat_text_edit = private_chat_windows[sender]['text_edit']
 
@@ -546,21 +547,22 @@ def private_message(data):
             else:
                 private_chat_text_edit.append(f"{sender}: {message}")
 
-            # Прокручиваем чат до самого низа
+            # Прокручиваем чат вниз
             scrollbar = private_chat_text_edit.verticalScrollBar()
             scrollbar.setValue(scrollbar.maximum())
 
-            # Если окно чата активно, сбросить счетчик непрочитанных сообщений
+            # Сбрасываем счётчик непрочитанных сообщений, если окно активно
             if private_chat_windows[sender]['window'].isVisible() and private_chat_windows[sender]['window'].isActiveWindow():
                 unread_messages[sender] = 0
             else:
                 unread_messages[sender] += 1
         else:
-            # Увеличить счетчик непрочитанных сообщений
+            # Если чат не открыт, увеличиваем количество непрочитанных сообщений
             unread_messages[sender] = unread_messages.get(sender, 0) + 1
 
-        # Обновить список пользователей
+        # Обновляем список пользователей
         update_user_listbox()
+
 @sio.event
 def message_received(data):
     sender = data.get('from')
@@ -588,7 +590,7 @@ def chat_history(data):
     username = data.get('username', '')
 
     if chat_type == 'global':
-        # Обрабатываем историю глобального чата в главном потоке
+        # Очищаем чат и добавляем сообщения из истории глобального чата
         QMetaObject.invokeMethod(chat_box, "clear", Qt.QueuedConnection)
         for msg in messages:
             sender = msg.get('sender', 'Unknown')
@@ -596,14 +598,14 @@ def chat_history(data):
             QMetaObject.invokeMethod(chat_box, "append", Qt.QueuedConnection, Q_ARG(str, f"{sender}: {text}"))
 
     elif chat_type == 'private' and username == current_chat_user:
-        # Обрабатываем историю приватного чата в главном потоке
+        # Очищаем чат и добавляем сообщения из истории приватного чата
         QMetaObject.invokeMethod(chat_box, "clear", Qt.QueuedConnection)
         for msg in messages:
             sender = msg.get('sender', 'Unknown')
             text = msg.get('text', '')
             QMetaObject.invokeMethod(chat_box, "append", Qt.QueuedConnection, Q_ARG(str, f"{sender}: {text}"))
 
-    # Прокручиваем до самого низа чата в главном потоке
+    # Прокручиваем до самого низа чата
     QMetaObject.invokeMethod(chat_box.verticalScrollBar(), "setValue", Qt.QueuedConnection,
                              Q_ARG(int, chat_box.verticalScrollBar().maximum()))
 
@@ -617,16 +619,20 @@ def send_message():
         # Очищаем поле ввода в главном потоке
         QMetaObject.invokeMethod(message_entry, "clear", Qt.QueuedConnection)
 
+        # Проверяем, какой чат активен, и отправляем сообщение
         if current_chat_type == 'global':
+            # Отправляем сообщение в глобальный чат
             sio.emit('global_message', {'text': text, 'sender': current_username})
         elif current_chat_type == 'private':
+            # Отправляем сообщение в приватный чат
             sio.emit('private_message', {'to': current_chat_user, 'text': text, 'from': current_username})
 
-        # Прокручиваем ползунок в главном потоке
+        # Прокручиваем чат до самого конца
         QMetaObject.invokeMethod(chat_box.verticalScrollBar(), "setValue", Qt.QueuedConnection,
                                  Q_ARG(int, chat_box.verticalScrollBar().maximum()))
 
 def update_user_listbox():
+    """Обновляет список пользователей и отображает непрочитанные сообщения."""
     global user_listbox, all_user_data, unread_messages, private_chat_windows, current_username
 
     user_listbox.clear()
@@ -638,11 +644,11 @@ def update_user_listbox():
                 item_text = username
                 item = QListWidgetItem(item_text)
 
-                # Проверяем, есть ли открытое окно чата и видимо ли оно
+                # Если окно чата открыто, сбрасываем количество непрочитанных сообщений
                 if username in private_chat_windows and private_chat_windows[username]['window'].isVisible():
                     unread_messages[username] = 0
 
-                # Добавляем символ, если есть непрочитанные сообщения
+                # Если есть непрочитанные сообщения, добавляем индикатор
                 if username != current_username and unread_messages.get(username, 0) > 0:
                     item_text += f" ⚠️ "
                     item.setText(item_text)
@@ -782,22 +788,23 @@ def start_private_chat(username):
     update_user_listbox()
 
 def send_private_message(username, message_entry):
-    """Отправка личного сообщения."""
-    global current_username  # Убедимся, что используем глобальную переменную
+    """Отправка личного сообщения в приватный чат."""
+    global current_username
 
     text = message_entry.toPlainText().strip()
     if text:
+        # Очищаем поле ввода
         message_entry.clear()
-        # Отправляем сообщение с указанием текущего пользователя
+
+        # Отправляем приватное сообщение
         sio.emit('private_message', {'to': username, 'text': text, 'from': current_username})
-        
-        # Добавляем сообщение в окно чата
+
+        # Отображаем сообщение в окне чата для отправителя
         private_chat_windows[username]['text_edit'].append(f"{current_username}: {text}")
 
-        # Обновляем ползунок прокрутки
+        # Прокручиваем чат вниз
         scrollbar = private_chat_windows[username]['text_edit'].verticalScrollBar()
         scrollbar.setValue(scrollbar.maximum())
-
 def logout():
     """Функция для выхода из аккаунта и удаления токена и IP."""
     global current_username, history_loaded, private_chat_windows, unread_messages, all_user_data  # Объявляем глобальные переменные
@@ -938,7 +945,7 @@ def switch_to_global_chat():
     current_chat_type = 'global'
     current_chat_user = None
 
-    # Очищаем текущее содержимое чата в главном потоке
+    # Очищаем текущее содержимое чата
     QMetaObject.invokeMethod(chat_box, "clear", Qt.QueuedConnection)
 
     # Запрашиваем историю глобального чата

@@ -405,6 +405,41 @@ def handle_connect(sid):
     else:
         emit('error', {'message': 'Необходим токен для подключения'}, room=sid)
 
+@socketio.on('global_message')
+def handle_global_message(data):
+    # Получаем сообщение и имя отправителя
+    message_text = data.get('text')
+    sender_username = data.get('sender')
+
+    if not message_text or not sender_username:
+        emit('error', {'message': 'Неверные данные для сообщения'})
+        return
+
+    # Сохранение в базу данных
+    conn, cur = get_db()
+    try:
+        # Ищем ID пользователя по его имени
+        cur.execute("SELECT id FROM users WHERE username = %s", (sender_username,))
+        user_id = cur.fetchone()
+        if user_id is None:
+            emit('error', {'message': 'Пользователь не найден'})
+            return
+        user_id = user_id[0]
+
+        # Вставляем сообщение в таблицу global_messages
+        cur.execute("INSERT INTO global_messages (user_id, message) VALUES (%s, %s)", (user_id, message_text))
+        conn.commit()
+
+        # Транслируем сообщение всем подключенным пользователям
+        emit('global_message', {'sender': sender_username, 'text': message_text}, room='global_room')
+    except psycopg2.Error as e:
+        conn.rollback()
+        logger.error(f"Ошибка базы данных при сохранении сообщения в глобальный чат: {e}")
+        emit('error', {'message': 'Ошибка базы данных при сохранении сообщения'})
+    finally:
+        cur.close()
+        conn.close()
+
 @socketio.on('private_message')
 def handle_private_message(data):
     username = session.get('username')
