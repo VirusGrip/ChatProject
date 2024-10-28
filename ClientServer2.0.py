@@ -155,16 +155,16 @@ def create_file_link(file_name):
     return f"{HOST}/uploads/{urllib.parse.quote(file_name)}"
 
 def open_emoji_picker(target_widget=None):
-    print(f"Тип виджета: {type(target_widget)}")  # Добавьте эту строку для отладки
+    """Открывает окно выбора эмодзи."""
+    print(f"Тип виджета: {type(target_widget)}")  # Для отладки
     if not isinstance(target_widget, (QTextEdit, QTextBrowser)):
         print("Ошибка: target_widget не является QTextEdit или QTextBrowser")
         return
+
     emoji_window = QDialog(main_window)
     emoji_window.setWindowTitle("Выбор эмодзи")
-
-    # Устанавливаем светло-голубой фон для окна и фиксированный размер
     emoji_window.setStyleSheet("background-color: #ADD8E6;")  # Светло-голубой цвет
-    emoji_window.setFixedSize(400, 300)  # Устанавливаем размер окна
+    emoji_window.setFixedSize(400, 300)
 
     scroll_area = QScrollArea(emoji_window)
     scroll_area.setWidgetResizable(True)
@@ -173,34 +173,17 @@ def open_emoji_picker(target_widget=None):
     layout = QGridLayout(emoji_container)
 
     # Ограниченный набор эмодзи (как в ВКонтакте)
-    standard_emojis = [
-        "😀", "😁", "😂", "🤣", "😃", "😄", "😅", "😆", "😉", "😊",
-        "😋", "😎", "😍", "😘", "😗", "😙", "😚", "🙂", "🤗", "🤔",
-        "😐", "😑", "😶", "🙄", "😏", "😣", "😥", "😮", "🤐", "👽",
-        "😯", "😪", "😫", "😴", "😌", "😛", "😜", "😝", "🤤", "😒",
-        "😓", "😔", "😕", "🙃", "🤑", "😲", "☹️", "🙁", "😖", "😞",
-        "😟", "😤", "😢", "😭", "😦", "😧", "😨", "😩", "😰", "😱",
-        "😳", "😵", "😡", "😠", "😷", "🤒", "🤕", "🤢", "👻", "💀",
-        "🤧", "😇", "🤠", "🤡", "🤥", "🤓", "😈", "👿", "👹", "👺",  
-        "🤖", "💩", "😺", "😸", "😹", "😻", "😼", "😽", "🙀", "😿",
-        "😾", "🙈", "🙉", "🙊", "🐵", "🐶", "🐱", "🐭", "🐹", "🐰",
-        "🦊", "🐻", "🐼", "🐨", "🐯", "🦁", "🐮", "🐷", "🐽", "🐸",
-        "🐵", "🐔", "🐧", "🐦", "🐤", "🐣", "🐥", "🦆", "🦅", "🦉"
-    ]
+    standard_emojis = ["😀", "😁", "😂", "🤣", "😃", "😄", "😅", "😆", "😉", "😊", "😋", "😎", "😍", "😘", "😗", "😙", "😚", "🙂", "🤗", "🤔"]
 
     row, col = 0, 0
     for symbol in standard_emojis:
         button = QToolButton()
         button.setText(symbol)
-
-        # Уменьшаем расстояние между кнопками
-        button.setStyleSheet("margin: 2px; padding: 5px; font-size: 16px;")  # Уменьшенные отступы и шрифт
-
-        # Используем partial для передачи правильных аргументов
+        button.setStyleSheet("margin: 2px; padding: 5px; font-size: 16px;")
         button.clicked.connect(partial(insert_emoji, symbol, target_widget))
         layout.addWidget(button, row, col)
         col += 1
-        if col > 4:  # Ограничиваем количество кнопок в строке
+        if col > 4:
             col = 0
             row += 1
 
@@ -210,8 +193,8 @@ def open_emoji_picker(target_widget=None):
     main_layout = QVBoxLayout(emoji_window)
     main_layout.addWidget(scroll_area)
     emoji_window.setLayout(main_layout)
-
     emoji_window.exec()
+
 
 def insert_emoji(symbol, target_widget):
     """Вставляет выбранный эмодзи в текстовое поле."""
@@ -220,6 +203,7 @@ def insert_emoji(symbol, target_widget):
         current_cursor.insertText(symbol)
     else:
         print("Ошибка: target_widget не является QTextEdit или QTextBrowser")
+
 
 def send_private_file(recipient_username):
     """Открывает диалог для выбора файла и отправляет его в приватный чат частями."""
@@ -233,12 +217,12 @@ def send_private_file(recipient_username):
         file_size = len(file_data)
         chunks = [file_data[i:i + CHUNK_SIZE] for i in range(0, file_size, CHUNK_SIZE)]
 
-        # Отправляем файл на сервер по частям
+        # Отправляем файл на сервер по частям в приватный чат
         for index, chunk in enumerate(chunks):
             sio.emit('private_file_upload_chunk', {
-                'to': recipient_username, 
-                'file_name': file_name, 
-                'file_data': chunk, 
+                'to': recipient_username,
+                'file_name': file_name,
+                'file_data': chunk,
                 'chunk_index': index,
                 'total_chunks': len(chunks),
                 'from': current_username
@@ -262,7 +246,7 @@ def create_download_button(file_name, file_data):
     return button
 
 def send_file():
-    """Открывает диалог для выбора файла и отправляет его на сервер по частям в общий чат."""
+    """Открывает диалог для выбора файла и отправляет его на сервер по частям в активный чат (глобальный или приватный)."""
     file_path, _ = QFileDialog.getOpenFileName(main_window, "Выберите файл")
     if file_path:
         file_name = os.path.basename(file_path)
@@ -274,14 +258,26 @@ def send_file():
         chunks = [file_data[i:i + CHUNK_SIZE] for i in range(0, file_size, CHUNK_SIZE)]
 
         for index, chunk in enumerate(chunks):
-            # Отправляем файл на сервер по частям
-            sio.emit('file_upload_chunk', {
-                'file_name': file_name,
-                'file_data': chunk,
-                'chunk_index': index,
-                'total_chunks': len(chunks),
-                'from': current_username
-            })
+            if current_chat_type == 'global':
+                # Отправляем файл на сервер по частям в общий чат
+                sio.emit('file_upload_chunk', {
+                    'file_name': file_name,
+                    'file_data': chunk,
+                    'chunk_index': index,
+                    'total_chunks': len(chunks),
+                    'from': current_username
+                })
+            elif current_chat_type == 'private' and current_chat_user:
+                # Отправляем файл на сервер по частям в приватный чат
+                sio.emit('private_file_upload_chunk', {
+                    'to': current_chat_user,
+                    'file_name': file_name,
+                    'file_data': chunk,
+                    'chunk_index': index,
+                    'total_chunks': len(chunks),
+                    'from': current_username
+                })
+
 
 def open_registration_window():
     """Открывает окно регистрации."""
@@ -589,7 +585,7 @@ def chat_history(data):
     chat_type = data.get('type', 'unknown')
     username = data.get('username', '')
 
-    if chat_type == 'global':
+    if chat_type == 'global' and current_chat_type == 'global':
         # Очищаем чат и добавляем сообщения из истории глобального чата
         QMetaObject.invokeMethod(chat_box, "clear", Qt.QueuedConnection)
         for msg in messages:
@@ -597,7 +593,7 @@ def chat_history(data):
             text = msg.get('text', '')
             QMetaObject.invokeMethod(chat_box, "append", Qt.QueuedConnection, Q_ARG(str, f"{sender}: {text}"))
 
-    elif chat_type == 'private' and username == current_chat_user:
+    elif chat_type == 'private' and current_chat_type == 'private' and username == current_chat_user:
         # Очищаем чат и добавляем сообщения из истории приватного чата
         QMetaObject.invokeMethod(chat_box, "clear", Qt.QueuedConnection)
         for msg in messages:
@@ -623,7 +619,7 @@ def send_message():
         if current_chat_type == 'global':
             # Отправляем сообщение в глобальный чат
             sio.emit('global_message', {'text': text, 'sender': current_username})
-        elif current_chat_type == 'private':
+        elif current_chat_type == 'private' and current_chat_user:
             # Отправляем сообщение в приватный чат
             sio.emit('private_message', {'to': current_chat_user, 'text': text, 'from': current_username})
 
